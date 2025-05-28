@@ -63,6 +63,7 @@ const hourlySubscriptionCheck = cron.schedule('0 * * * *', async () => {
   timezone: "Africa/Lagos"
 });
 
+
 // Create the updateSubscriptions object that your index.js expects
 const updateSubscriptions = {
   start: () => {
