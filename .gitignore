@@ -1,0 +1,28 @@
+# Ignore environment variables
+.env
+
+# Ignore node_modules (huge, can be reinstalled with npm install)
+node_modules/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore log files
+*.log
+
+# Optional: Ignore coverage reports, if using test coverage tools
+coverage/
+
+# Optional: Ignore IDE/editor files
+.vscode/
+.idea/
+
+# Ignore build or temp files
+dist/
+build/
+tmp/
+
+
+#ignore play ground 
+aaaaaaa.js
