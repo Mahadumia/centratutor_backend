@@ -8,18 +8,28 @@
     "dev": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["api", "education", "backend", "nodejs", "express"],
+  "keywords": [
+    "api",
+    "education",
+    "backend",
+    "nodejs",
+    "express"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^3.0.2",
+    "compression": "^1.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.2.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^6.10.0",
     "morgan": "^1.10.0",
+    "multer": "^2.0.1",
     "node-cron": "^4.0.6",
     "nodemailer": "^7.0.3",
     "sib-api-v3-sdk": "^8.5.0"
