@@ -114,15 +114,16 @@ router.get('/name/:name', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const { name, displayName, description, icon, routePath, orderIndex } = req.body;
+    const { examId, name, displayName, description, icon, routePath, orderIndex } = req.body;
     
-    if (!name || !displayName || !routePath) {
+    if (!examId || !name || !displayName || !routePath) {
       return res.status(400).json({ 
-        message: 'Name, displayName, and routePath are required' 
+        message: 'examId, name, displayName, and routePath are required' 
       });
     }
     
     const subCategoryData = {
+      examId,
       name,
       displayName,
       description,
@@ -136,12 +137,65 @@ router.post('/', async (req, res) => {
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({ 
-        message: 'SubCategory with this name already exists' 
+        message: 'SubCategory with this name already exists for this exam' 
       });
     }
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
+
+
+/**
+ * @route   POST /api/subcategories/exam/:examId/bulk
+ * @desc    Create multiple subcategories for a specific exam
+ * @access  Private
+ */
+router.post('/exam/:examId/bulk', async (req, res) => {
+  try {
+    const { subCategories } = req.body;
+    const examId = req.params.examId;
+    
+    if (!subCategories || !Array.isArray(subCategories) || subCategories.length === 0) {
+      return res.status(400).json({ message: 'SubCategories array is required' });
+    }
+    
+    // Add examId to each subcategory
+    const subCategoriesWithExamId = subCategories.map(subCategory => ({
+      ...subCategory,
+      examId
+    }));
+    
+    const results = await subCategoryModel.createBulkSubCategories(subCategoriesWithExamId);
+    
+    res.status(201).json({
+      message: `Created ${results.created.length} subcategories with ${results.errors.length} errors and ${results.duplicates.length} duplicates`,
+      examId,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * @route   POST /api/subcategories/exam/:examId/seed
+ * @desc    Seed default subcategories for a specific exam
+ * @access  Private
+ */
+router.post('/exam/:examId/seed', async (req, res) => {
+  try {
+    const results = await subCategoryModel.seedDefaultSubCategories(req.params.examId);
+
+    res.status(201).json({
+      message: 'Seeding completed for exam',
+      examId: req.params.examId,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 
 /**
  * @route   POST /api/subcategories/bulk

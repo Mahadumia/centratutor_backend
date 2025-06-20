@@ -201,6 +201,30 @@ router.post('/:examId/subjects/:subjectId/tracks/bulk', async (req, res) => {
   }
 });
 
+
+/**
+ * @route   DELETE /api/exams/:examId/subjects/:subjectId/tracks/hard-delete
+ * @desc    Permanently delete all tracks for a subject
+ * @access  Private
+ */
+router.delete('/:examId/subjects/:subjectId/tracks/hard-delete', async (req, res) => {
+  try {
+    const { Track } = require('../models/exam');
+    
+    const result = await Track.deleteMany({
+      examId: req.params.examId,
+      subjectId: req.params.subjectId
+    });
+    
+    res.json({ 
+      message: `Permanently deleted ${result.deletedCount} tracks for subject`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // ========== SUBCATEGORY NAVIGATION ENDPOINTS ==========
 
 /**

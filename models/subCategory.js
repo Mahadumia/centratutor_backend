@@ -3,36 +3,43 @@ const mongoose = require('mongoose');
 const { SubCategory } = require('./exam');
 
 class SubCategoryModel {
-  async createSubCategory(data) {
-    try {
-      const { name, displayName, description, icon, routePath, orderIndex } = data;
-      
-      const subCategory = new SubCategory({
-        name: name.toLowerCase(),
-        displayName,
-        description,
-        icon: icon || `assets/images/${name.toLowerCase()}.png`,
-        routePath,
-        orderIndex: orderIndex || 0
-      });
+async createSubCategory(data) {
+  try {
+    const { examId, name, displayName, description, icon, routePath, orderIndex } = data;
+    
+    const subCategory = new SubCategory({
+      examId, // Add examId
+      name: name.toLowerCase(),
+      displayName,
+      description,
+      icon: icon || `assets/images/${name.toLowerCase()}.png`,
+      routePath,
+      orderIndex: orderIndex || 0
+    });
 
-      await subCategory.save();
-      return subCategory;
-    } catch (error) {
-      console.error('Error creating subcategory:', error);
-      throw error;
-    }
+    await subCategory.save();
+    return subCategory;
+  } catch (error) {
+    console.error('Error creating subcategory:', error);
+    throw error;
   }
+}
 
-  async getAllSubCategories() {
-    try {
-      return await SubCategory.find({ isActive: true })
-        .sort({ orderIndex: 1, name: 1 });
-    } catch (error) {
-      console.error('Error getting subcategories:', error);
-      throw error;
+async getAllSubCategories(examId = null) {
+  try {
+    const query = { isActive: true };
+    if (examId) {
+      query.examId = examId;
     }
+    
+    return await SubCategory.find(query)
+      .populate('examId')
+      .sort({ orderIndex: 1, name: 1 });
+  } catch (error) {
+    console.error('Error getting subcategories:', error);
+    throw error;
   }
+}
 
   async getSubCategoryById(id) {
     try {
@@ -43,17 +50,23 @@ class SubCategoryModel {
     }
   }
 
-  async getSubCategoryByName(name) {
-    try {
-      return await SubCategory.findOne({ 
-        name: name.toLowerCase(), 
-        isActive: true 
-      });
-    } catch (error) {
-      console.error('Error getting subcategory by name:', error);
-      throw error;
+ async getSubCategoryByName(name, examId = null) {
+  try {
+    const query = { 
+      name: name.toLowerCase(), 
+      isActive: true 
+    };
+    
+    if (examId) {
+      query.examId = examId;
     }
+    
+    return await SubCategory.findOne(query).populate('examId');
+  } catch (error) {
+    console.error('Error getting subcategory by name:', error);
+    throw error;
   }
+}
 
   async updateSubCategory(id, updateData) {
     try {
@@ -149,58 +162,65 @@ class SubCategoryModel {
     }
   }
 
-  async seedDefaultSubCategories() {
-    try {
-      const defaultSubCategories = [
-        {
-          name: 'pastquestions',
-          displayName: 'Past Questions',
-          description: 'Previous exam questions and answers',
-          routePath: '/pastquestions',
-          orderIndex: 1
-        },
-        {
-          name: 'notes',
-          displayName: 'Notes',
-          description: 'Study materials and comprehensive notes',
-          routePath: '/notes',
-          orderIndex: 2
-        },
-        {
-          name: 'videos',
-          displayName: 'Videos',
-          description: 'Educational video content',
-          routePath: '/videos',
-          orderIndex: 3
-        }
-      ];
-
-      const results = { created: [], existing: [], errors: [] };
-      
-      for (const subCategoryData of defaultSubCategories) {
-        try {
-          // Check if subcategory already exists
-          const existing = await this.getSubCategoryByName(subCategoryData.name);
-          if (!existing) {
-            const created = await this.createSubCategory(subCategoryData);
-            results.created.push(created.name);
-          } else {
-            results.existing.push(subCategoryData.name);
-          }
-        } catch (error) {
-          results.errors.push({ 
-            name: subCategoryData.name, 
-            error: error.message 
-          });
-        }
-      }
-
-      return results;
-    } catch (error) {
-      console.error('Error seeding default subcategories:', error);
-      throw error;
+async seedDefaultSubCategories(examId) {
+  try {
+    if (!examId) {
+      throw new Error('examId is required for seeding subcategories');
     }
+
+    const defaultSubCategories = [
+      {
+        examId,
+        name: 'pastquestions',
+        displayName: 'Past Questions',
+        description: 'Previous exam questions and answers',
+        routePath: '/pastquestions',
+        orderIndex: 1
+      },
+      {
+        examId,
+        name: 'notes',
+        displayName: 'Notes',
+        description: 'Study materials and comprehensive notes',
+        routePath: '/notes',
+        orderIndex: 2
+      },
+      {
+        examId,
+        name: 'videos',
+        displayName: 'Videos',
+        description: 'Educational video content',
+        routePath: '/videos',
+        orderIndex: 3
+      }
+    ];
+
+    const results = { created: [], existing: [], errors: [] };
+    
+    for (const subCategoryData of defaultSubCategories) {
+      try {
+        // Check if subcategory already exists for this exam
+        const existing = await this.getSubCategoryByName(subCategoryData.name, examId);
+        if (!existing) {
+          const created = await this.createSubCategory(subCategoryData);
+          results.created.push(created.name);
+        } else {
+          results.existing.push(subCategoryData.name);
+        }
+      } catch (error) {
+        results.errors.push({ 
+          name: subCategoryData.name, 
+          error: error.message 
+        });
+      }
+    }
+
+    return results;
+  } catch (error) {
+    console.error('Error seeding default subcategories:', error);
+    throw error;
   }
+}
 
   async searchSubCategories(query) {
     try {

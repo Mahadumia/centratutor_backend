@@ -144,10 +144,15 @@ const trackSchema = new mongoose.Schema({
 
 // SubCategory Schema - Learning content types like Notes, Past Questions, Videos
 const subCategorySchema = new mongoose.Schema({
+  examId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Exam',
+    required: true,
+    index: true
+  },
   name: {
     type: String,
     required: true,
-    unique: true,
     lowercase: true
   },
   displayName: {
@@ -354,6 +359,7 @@ trackSchema.index({ examId: 1, subjectId: 1, name: 1 }, { unique: true });
 subjectAvailabilitySchema.index({ examId: 1, subjectId: 1, subCategoryId: 1 }, { unique: true });
 contentSchema.index({ examId: 1, subjectId: 1, trackId: 1, subCategoryId: 1, name: 1 }, { unique: true });
 questionSchema.index({ examId: 1, subjectId: 1, trackId: 1, topicId: 1, year: 1 });
+subCategorySchema.index({ examId: 1, name: 1 }, { unique: true });
 
 // Create models
 const Exam = mongoose.model('Exam', examSchema);
@@ -621,66 +627,66 @@ class ExamModel {
     }
   }
 
-  async setSubjectAvailabilityBulk(examId, availabilityData) {
-    try {
-      const results = { created: [], errors: [], duplicates: [] };
-      
-      for (const [index, availability] of availabilityData.entries()) {
-        try {
-          // Get subject and subcategory by name
-          const subject = await Subject.findOne({ 
-            examId, 
-            name: availability.subjectName, 
-            isActive: true 
-          });
-          const subCategory = await SubCategory.findOne({ 
-            name: availability.subCategoryName.toLowerCase(), 
-            isActive: true 
-          });
+async setSubjectAvailabilityBulk(examId, availabilityData) {
+  try {
+    const results = { created: [], errors: [], duplicates: [] };
+    
+    for (const [index, availability] of availabilityData.entries()) {
+      try {
+        // Get subject and subcategory by name (subcategory must be for this exam)
+        const subject = await Subject.findOne({ 
+          examId, 
+          name: availability.subjectName, 
+          isActive: true 
+        });
+        const subCategory = await SubCategory.findOne({ 
+          examId, // Add examId filter
+          name: availability.subCategoryName.toLowerCase(), 
+          isActive: true 
+        });
 
-          if (!subject || !subCategory) {
-            results.errors.push({
-              index,
-              name: `${availability.subjectName}-${availability.subCategoryName}`,
-              error: 'Subject or SubCategory not found'
-            });
-            continue;
-          }
-
-          const availabilityRecord = await this.createSubjectAvailability({
-            examId,
-            subjectId: subject._id,
-            subCategoryId: subCategory._id
+        if (!subject || !subCategory) {
+          results.errors.push({
+            index,
+            name: `${availability.subjectName}-${availability.subCategoryName}`,
+            error: 'Subject or SubCategory not found for this exam'
           });
+          continue;
+        }
 
-          results.created.push({
-            id: availabilityRecord._id,
+        const availabilityRecord = await this.createSubjectAvailability({
+          examId,
+          subjectId: subject._id,
+          subCategoryId: subCategory._id
+        });
+
+        results.created.push({
+          id: availabilityRecord._id,
+          name: `${availability.subjectName}-${availability.subCategoryName}`
+        });
+        
+      } catch (error) {
+        if (error.code === 11000) {
+          results.duplicates.push({
+            index,
             name: `${availability.subjectName}-${availability.subCategoryName}`
           });
-          
-        } catch (error) {
-          if (error.code === 11000) {
-            results.duplicates.push({
-              index,
-              name: `${availability.subjectName}-${availability.subCategoryName}`
-            });
-          } else {
-            results.errors.push({
-              index,
-              name: `${availability.subjectName || 'Unknown'}-${availability.subCategoryName || 'Unknown'}`,
-              error: error.message
-            });
-          }
+        } else {
+          results.errors.push({
+            index,
+            name: `${availability.subjectName || 'Unknown'}-${availability.subCategoryName || 'Unknown'}`,
+            error: error.message
+          });
         }
       }
-      
-      return results;
-    } catch (error) {
-      console.error('Error setting bulk subject availability:', error);
-      throw error;
     }
+    
+    return results;
+  } catch (error) {
+    console.error('Error setting bulk subject availability:', error);
+    throw error;
   }
-
+}
   async getSubjectsInSubCategory(examId, subCategoryId) {
     try {
       return await SubjectAvailability.find({ 
