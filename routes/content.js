@@ -1,4 +1,4 @@
-// routes/content.js - Content Management Routes
+// routes/content.js - Updated for Modified Architecture
 const express = require('express');
 const router = express.Router();
 const { ExamModel } = require('../models/exam');
@@ -219,7 +219,11 @@ router.get('/by-path/:examName/:subCategoryName/:subjectName/:trackName', async 
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subCategory = await SubCategory.findOne({ name: subCategoryName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ 
+      examId: exam._id,
+      name: subCategoryName.toLowerCase(), 
+      isActive: true 
+    });
     
     if (!exam || !subCategory) {
       return res.status(404).json({ message: 'Exam or SubCategory not found' });
@@ -231,9 +235,10 @@ router.get('/by-path/:examName/:subCategoryName/:subjectName/:trackName', async 
       isActive: true 
     });
     
+    // MODIFIED: Track is now associated with subcategory, not subject
     const track = await Track.findOne({ 
       examId: exam._id, 
-      subjectId: subject._id, 
+      subCategoryId: subCategory._id, 
       name: trackName, 
       isActive: true 
     });
@@ -379,8 +384,8 @@ router.post('/validate-upload', async (req, res) => {
     // Validate subject exists
     validationResults.subjectValid = await examModel.validateSubjectExists(examId, subjectId);
     
-    // Validate track exists
-    validationResults.trackValid = await examModel.validateTrackExists(examId, subjectId, trackId);
+    // MODIFIED: Validate track exists for subcategory
+    validationResults.trackValid = await examModel.validateTrackExists(examId, subCategoryId, trackId);
     
     // Validate subject availability in subcategory
     validationResults.availabilityValid = await examModel.validateSubjectAvailability(

@@ -1,4 +1,4 @@
-// models/exam.js - With Topics System for Past Questions
+// models/exam.js - Modified Architecture: Global Subjects & Tracks per Exam-SubCategory
 const mongoose = require('mongoose');
 
 // Exam Schema - Main exam categories like JUPEB, WAEC, etc.
@@ -29,7 +29,7 @@ const examSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Subject Schema - Standard subjects for each exam
+// MODIFIED: Subject Schema - Global subjects for each exam (not tied to subcategory)
 const subjectSchema = new mongoose.Schema({
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -61,7 +61,7 @@ const subjectSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// NEW: Topic Schema - Standard approved topics for each exam-subject combination
+// Topic Schema - Standard approved topics for each exam-subject combination
 const topicSchema = new mongoose.Schema({
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -97,7 +97,7 @@ const topicSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Track Schema - Learning tracks like "Years", "14 Days", "7 Weeks", etc.
+// MODIFIED: Track Schema - Tracks per exam-subcategory combination (not per subject)
 const trackSchema = new mongoose.Schema({
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -105,9 +105,9 @@ const trackSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  subjectId: {
+  subCategoryId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Subject',
+    ref: 'SubCategory',
     required: true,
     index: true
   },
@@ -214,7 +214,7 @@ const subjectAvailabilitySchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Content Schema - For file-based content (Notes, Videos)
+// MODIFIED: Content Schema - Updated to work with new track structure
 const contentSchema = new mongoose.Schema({
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -283,7 +283,7 @@ const contentSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// NEW: Question Schema - For past questions stored as JSON
+// MODIFIED: Question Schema - Updated to work with new track structure
 const questionSchema = new mongoose.Schema({
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -352,10 +352,10 @@ const questionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Compound indexes for better query performance
+// UPDATED: Compound indexes for better query performance
 subjectSchema.index({ examId: 1, name: 1 }, { unique: true });
 topicSchema.index({ examId: 1, subjectId: 1, name: 1 }, { unique: true });
-trackSchema.index({ examId: 1, subjectId: 1, name: 1 }, { unique: true });
+trackSchema.index({ examId: 1, subCategoryId: 1, name: 1 }, { unique: true }); // CHANGED
 subjectAvailabilitySchema.index({ examId: 1, subjectId: 1, subCategoryId: 1 }, { unique: true });
 contentSchema.index({ examId: 1, subjectId: 1, trackId: 1, subCategoryId: 1, name: 1 }, { unique: true });
 questionSchema.index({ examId: 1, subjectId: 1, trackId: 1, topicId: 1, year: 1 });
@@ -402,7 +402,7 @@ class ExamModel {
     }
   }
 
-  // Subject methods
+  // MODIFIED: Subject methods - Now global per exam
   async createSubject(subjectData) {
     try {
       const subject = new Subject(subjectData);
@@ -470,7 +470,7 @@ class ExamModel {
     }
   }
 
-  // NEW: Topic methods
+  // Topic methods (unchanged)
   async createTopic(topicData) {
     try {
       const topic = new Topic(topicData);
@@ -547,22 +547,22 @@ class ExamModel {
     }
   }
 
-  // Track methods
+  // MODIFIED: Track methods - Now per exam-subcategory combination
   async createTrack(trackData) {
     try {
       const track = new Track(trackData);
       await track.save();
-      return await track.populate(['examId', 'subjectId']);
+      return await track.populate(['examId', 'subCategoryId']);
     } catch (error) {
       console.error('Error creating track:', error);
       throw error;
     }
   }
 
-  async getTracksBySubject(examId, subjectId) {
+  async getTracksByExamSubCategory(examId, subCategoryId) {
     try {
-      return await Track.find({ examId, subjectId, isActive: true })
-        .populate(['examId', 'subjectId'])
+      return await Track.find({ examId, subCategoryId, isActive: true })
+        .populate(['examId', 'subCategoryId'])
         .sort({ orderIndex: 1, name: 1 });
     } catch (error) {
       console.error('Error getting tracks:', error);
@@ -570,7 +570,7 @@ class ExamModel {
     }
   }
 
-  async createBulkTracks(examId, subjectId, tracks) {
+  async createBulkTracks(examId, subCategoryId, tracks) {
     try {
       const results = { created: [], errors: [], duplicates: [] };
       
@@ -585,7 +585,7 @@ class ExamModel {
             continue;
           }
           
-          const completeTrackData = { examId, subjectId, ...trackData };
+          const completeTrackData = { examId, subCategoryId, ...trackData };
           const newTrack = await this.createTrack(completeTrackData);
           results.created.push({
             id: newTrack._id,
@@ -615,7 +615,7 @@ class ExamModel {
     }
   }
 
-  // Subject Availability methods
+  // Subject Availability methods (unchanged)
   async createSubjectAvailability(availabilityData) {
     try {
       const availability = new SubjectAvailability(availabilityData);
@@ -627,66 +627,67 @@ class ExamModel {
     }
   }
 
-async setSubjectAvailabilityBulk(examId, availabilityData) {
-  try {
-    const results = { created: [], errors: [], duplicates: [] };
-    
-    for (const [index, availability] of availabilityData.entries()) {
-      try {
-        // Get subject and subcategory by name (subcategory must be for this exam)
-        const subject = await Subject.findOne({ 
-          examId, 
-          name: availability.subjectName, 
-          isActive: true 
-        });
-        const subCategory = await SubCategory.findOne({ 
-          examId, // Add examId filter
-          name: availability.subCategoryName.toLowerCase(), 
-          isActive: true 
-        });
-
-        if (!subject || !subCategory) {
-          results.errors.push({
-            index,
-            name: `${availability.subjectName}-${availability.subCategoryName}`,
-            error: 'Subject or SubCategory not found for this exam'
+  async setSubjectAvailabilityBulk(examId, availabilityData) {
+    try {
+      const results = { created: [], errors: [], duplicates: [] };
+      
+      for (const [index, availability] of availabilityData.entries()) {
+        try {
+          // Get subject and subcategory by name (subcategory must be for this exam)
+          const subject = await Subject.findOne({ 
+            examId, 
+            name: availability.subjectName, 
+            isActive: true 
           });
-          continue;
-        }
+          const subCategory = await SubCategory.findOne({ 
+            examId, // Add examId filter
+            name: availability.subCategoryName.toLowerCase(), 
+            isActive: true 
+          });
 
-        const availabilityRecord = await this.createSubjectAvailability({
-          examId,
-          subjectId: subject._id,
-          subCategoryId: subCategory._id
-        });
+          if (!subject || !subCategory) {
+            results.errors.push({
+              index,
+              name: `${availability.subjectName}-${availability.subCategoryName}`,
+              error: 'Subject or SubCategory not found for this exam'
+            });
+            continue;
+          }
 
-        results.created.push({
-          id: availabilityRecord._id,
-          name: `${availability.subjectName}-${availability.subCategoryName}`
-        });
-        
-      } catch (error) {
-        if (error.code === 11000) {
-          results.duplicates.push({
-            index,
+          const availabilityRecord = await this.createSubjectAvailability({
+            examId,
+            subjectId: subject._id,
+            subCategoryId: subCategory._id
+          });
+
+          results.created.push({
+            id: availabilityRecord._id,
             name: `${availability.subjectName}-${availability.subCategoryName}`
           });
-        } else {
-          results.errors.push({
-            index,
-            name: `${availability.subjectName || 'Unknown'}-${availability.subCategoryName || 'Unknown'}`,
-            error: error.message
-          });
+          
+        } catch (error) {
+          if (error.code === 11000) {
+            results.duplicates.push({
+              index,
+              name: `${availability.subjectName}-${availability.subCategoryName}`
+            });
+          } else {
+            results.errors.push({
+              index,
+              name: `${availability.subjectName || 'Unknown'}-${availability.subCategoryName || 'Unknown'}`,
+              error: error.message
+            });
+          }
         }
       }
+      
+      return results;
+    } catch (error) {
+      console.error('Error setting bulk subject availability:', error);
+      throw error;
     }
-    
-    return results;
-  } catch (error) {
-    console.error('Error setting bulk subject availability:', error);
-    throw error;
   }
-}
+
   async getSubjectsInSubCategory(examId, subCategoryId) {
     try {
       return await SubjectAvailability.find({ 
@@ -703,23 +704,11 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  async getTracksInSubCategory(examId, subCategoryId, subjectId) {
+  // MODIFIED: Get tracks for subcategory (not dependent on subject anymore)
+  async getTracksInSubCategory(examId, subCategoryId) {
     try {
-      // First check if subject is available in this subcategory
-      const availability = await SubjectAvailability.findOne({
-        examId,
-        subjectId,
-        subCategoryId,
-        isActive: true
-      });
-
-      if (!availability) {
-        return [];
-      }
-
-      // Return tracks for this subject
-      return await Track.find({ examId, subjectId, isActive: true })
-        .populate(['examId', 'subjectId'])
+      return await Track.find({ examId, subCategoryId, isActive: true })
+        .populate(['examId', 'subCategoryId'])
         .sort({ orderIndex: 1, name: 1 });
     } catch (error) {
       console.error('Error getting tracks in subcategory:', error);
@@ -727,7 +716,7 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  // Content methods (for Notes/Videos)
+  // Content methods (updated to work with new structure)
   async createContent(contentData) {
     try {
       const content = new Content(contentData);
@@ -757,7 +746,7 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  // NEW: Question methods (for Past Questions)
+  // Question methods (updated to work with new structure)
   async createQuestion(questionData) {
     try {
       const question = new Question(questionData);
@@ -781,11 +770,19 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
             examId: exam._id, 
             name: questionData.subject 
           });
+          
+          // For past questions, find track in the pastquestions subcategory
+          const pastQuestionsSubCategory = await SubCategory.findOne({
+            examId: exam._id,
+            name: 'pastquestions'
+          });
+          
           const track = await Track.findOne({ 
             examId: exam._id, 
-            subjectId: subject._id, 
+            subCategoryId: pastQuestionsSubCategory._id,
             name: questionData.year // For past questions, track is usually the year
           });
+          
           const topic = await Topic.findOne({
             examId: exam._id,
             subjectId: subject._id,
@@ -859,7 +856,7 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  // Multi-selection methods for Past Questions
+  // Multi-selection methods for Past Questions (updated)
   async getQuestionsMultiSelection(examId, subjectId, trackIds, topicIds) {
     try {
       const query = {
@@ -885,14 +882,14 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  // Complete structure methods
+  // MODIFIED: Complete structure methods
   async getCompleteUserFlow(examId) {
     try {
       const exam = await Exam.findById(examId);
       if (!exam) return null;
 
-      // Get all subcategories
-      const subCategories = await SubCategory.find({ isActive: true })
+      // Get all subcategories for this exam
+      const subCategories = await SubCategory.find({ examId, isActive: true })
         .sort({ orderIndex: 1, name: 1 });
       
       const structure = {
@@ -904,44 +901,42 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
         // Get subjects available in this subcategory
         const subjects = await this.getSubjectsInSubCategory(examId, subCategory._id);
         
+        // Get tracks for this subcategory
+        const tracks = await this.getTracksInSubCategory(examId, subCategory._id);
+
         const subCategoryData = {
           ...subCategory.toObject(),
-          subjects: []
+          subjects: subjects.map(subject => subject.toObject()),
+          tracks: []
         };
 
-        for (const subject of subjects) {
-          // Get tracks for this subject
-          const tracks = await this.getTracksInSubCategory(examId, subCategory._id, subject._id);
-
-          const subjectData = {
-            ...subject.toObject(),
-            tracks: []
+        for (const track of tracks) {
+          let trackData = {
+            ...track.toObject()
           };
 
-          for (const track of tracks) {
-            let trackData = {
-              ...track.toObject()
-            };
-
-            // If this is past questions, add topics
-            if (subCategory.name === 'pastquestions' || subCategory.contentType === 'json') {
+          // If this is past questions, add topics for each subject
+          if (subCategory.name === 'pastquestions' || subCategory.contentType === 'json') {
+            trackData.subjectTopics = {};
+            for (const subject of subjects) {
               const topics = await this.getTopicsBySubject(examId, subject._id);
-              trackData.topics = topics.map(topic => topic.toObject());
-            } else {
-              // For file-based content (notes/videos)
+              trackData.subjectTopics[subject._id] = topics.map(topic => topic.toObject());
+            }
+          } else {
+            // For file-based content (notes/videos), get content for each subject
+            trackData.subjectContent = {};
+            for (const subject of subjects) {
               const content = await this.getContentByFilters({
                 examId,
                 subjectId: subject._id,
                 trackId: track._id,
                 subCategoryId: subCategory._id
               });
-              trackData.content = content.map(c => c.toObject());
+              trackData.subjectContent[subject._id] = content.map(c => c.toObject());
             }
-
-            subjectData.tracks.push(trackData);
           }
 
-          subCategoryData.subjects.push(subjectData);
+          subCategoryData.tracks.push(trackData);
         }
 
         structure.subCategories.push(subCategoryData);
@@ -954,7 +949,7 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  // Validation methods
+  // Validation methods (updated)
   async validateExamExists(examId) {
     try {
       const exam = await Exam.findById(examId);
@@ -994,12 +989,12 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  async validateTrackExists(examId, subjectId, trackId) {
+  async validateTrackExists(examId, subCategoryId, trackId) {
     try {
       const track = await Track.findOne({
         _id: trackId,
         examId,
-        subjectId,
+        subCategoryId,
         isActive: true
       });
       return !!track;
@@ -1024,7 +1019,7 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-  // Seed method for complete exam setup
+  // MODIFIED: Seed method for complete exam setup
   async seedCompleteExam(examData, subjectsData, topicsData, tracksData, availabilityData) {
     try {
       // Create or get exam
@@ -1047,7 +1042,7 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
         availability: []
       };
 
-      // Create subjects
+      // Create subjects (global per exam)
       if (subjectsData && subjectsData.length > 0) {
         const subjectResults = await this.createBulkSubjects(exam._id, subjectsData);
         results.subjects = subjectResults;
@@ -1072,20 +1067,23 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
         }
       }
 
-      // Create tracks for each subject
+      // Create tracks for each subcategory
       if (tracksData && tracksData.length > 0) {
-        const tracksBySubject = {};
+        const tracksBySubCategory = {};
         tracksData.forEach(track => {
-          if (!tracksBySubject[track.subjectName]) {
-            tracksBySubject[track.subjectName] = [];
+          if (!tracksBySubCategory[track.subCategoryName]) {
+            tracksBySubCategory[track.subCategoryName] = [];
           }
-          tracksBySubject[track.subjectName].push(track);
+          tracksBySubCategory[track.subCategoryName].push(track);
         });
 
-        for (const [subjectName, tracks] of Object.entries(tracksBySubject)) {
-          const subject = await Subject.findOne({ examId: exam._id, name: subjectName });
-          if (subject) {
-            const trackResults = await this.createBulkTracks(exam._id, subject._id, tracks);
+        for (const [subCategoryName, tracks] of Object.entries(tracksBySubCategory)) {
+          const subCategory = await SubCategory.findOne({ 
+            examId: exam._id, 
+            name: subCategoryName.toLowerCase() 
+          });
+          if (subCategory) {
+            const trackResults = await this.createBulkTracks(exam._id, subCategory._id, tracks);
             results.tracks.push(...trackResults.created);
           }
         }
@@ -1104,145 +1102,145 @@ async setSubjectAvailabilityBulk(examId, availabilityData) {
     }
   }
 
-async createBulkContent(contentArray) {
-  try {
-    const results = { created: [], errors: [], duplicates: [] };
-    
-    for (const [index, contentData] of contentArray.entries()) {
-      try {
-        // Resolve names to IDs
-        const exam = await Exam.findOne({ name: contentData.examName.toUpperCase() });
-        const subject = await Subject.findOne({ 
-          examId: exam._id, 
-          name: contentData.subjectName 
-        });
-        const track = await Track.findOne({ 
-          examId: exam._id, 
-          subjectId: subject._id, 
-          name: contentData.trackName 
-        });
-        const subCategory = await SubCategory.findOne({ 
-          name: contentData.subCategoryName.toLowerCase() 
-        });
-
-        if (!exam || !subject || !track || !subCategory) {
-          results.errors.push({
-            index,
-            name: contentData.name || 'Unknown',
-            error: 'Exam, Subject, Track, or SubCategory not found'
+  async createBulkContent(contentArray) {
+    try {
+      const results = { created: [], errors: [], duplicates: [] };
+      
+      for (const [index, contentData] of contentArray.entries()) {
+        try {
+          // Resolve names to IDs
+          const exam = await Exam.findOne({ name: contentData.examName.toUpperCase() });
+          const subject = await Subject.findOne({ 
+            examId: exam._id, 
+            name: contentData.subjectName 
           });
-          continue;
-        }
-
-        const completeContentData = {
-          examId: exam._id,
-          subjectId: subject._id,
-          trackId: track._id,
-          subCategoryId: subCategory._id,
-          name: contentData.name,
-          displayName: contentData.displayName,
-          description: contentData.description,
-          filePath: contentData.filePath,
-          fileType: contentData.fileType,
-          fileSize: contentData.fileSize,
-          duration: contentData.duration,
-          orderIndex: contentData.orderIndex || 0,
-          metadata: contentData.metadata || {}
-        };
-
-        const newContent = await this.createContent(completeContentData);
-        results.created.push({
-          id: newContent._id,
-          name: newContent.name
-        });
-        
-      } catch (error) {
-        if (error.code === 11000) {
-          results.duplicates.push({
-            index,
-            name: contentData.name
+          const subCategory = await SubCategory.findOne({ 
+            examId: exam._id,
+            name: contentData.subCategoryName.toLowerCase() 
           });
-        } else {
-          results.errors.push({
-            index,
-            name: contentData.name || 'Unknown',
-            error: error.message
+          const track = await Track.findOne({ 
+            examId: exam._id, 
+            subCategoryId: subCategory._id, 
+            name: contentData.trackName 
           });
+
+          if (!exam || !subject || !track || !subCategory) {
+            results.errors.push({
+              index,
+              name: contentData.name || 'Unknown',
+              error: 'Exam, Subject, Track, or SubCategory not found'
+            });
+            continue;
+          }
+
+          const completeContentData = {
+            examId: exam._id,
+            subjectId: subject._id,
+            trackId: track._id,
+            subCategoryId: subCategory._id,
+            name: contentData.name,
+            displayName: contentData.displayName,
+            description: contentData.description,
+            filePath: contentData.filePath,
+            fileType: contentData.fileType,
+            fileSize: contentData.fileSize,
+            duration: contentData.duration,
+            orderIndex: contentData.orderIndex || 0,
+            metadata: contentData.metadata || {}
+          };
+
+          const newContent = await this.createContent(completeContentData);
+          results.created.push({
+            id: newContent._id,
+            name: newContent.name
+          });
+          
+        } catch (error) {
+          if (error.code === 11000) {
+            results.duplicates.push({
+              index,
+              name: contentData.name
+            });
+          } else {
+            results.errors.push({
+              index,
+              name: contentData.name || 'Unknown',
+              error: error.message
+            });
+          }
         }
       }
+      
+      return results;
+    } catch (error) {
+      console.error('Error creating bulk content:', error);
+      throw error;
     }
-    
-    return results;
-  } catch (error) {
-    console.error('Error creating bulk content:', error);
-    throw error;
   }
-}
 
-async searchContent(query, filters = {}) {
-  try {
-    const searchRegex = new RegExp(query, 'i');
-    const searchQuery = {
-      $or: [
-        { name: searchRegex },
-        { displayName: searchRegex },
-        { description: searchRegex }
-      ],
-      isActive: true
-    };
+  async searchContent(query, filters = {}) {
+    try {
+      const searchRegex = new RegExp(query, 'i');
+      const searchQuery = {
+        $or: [
+          { name: searchRegex },
+          { displayName: searchRegex },
+          { description: searchRegex }
+        ],
+        isActive: true
+      };
 
-    if (filters.examId) searchQuery.examId = filters.examId;
-    if (filters.subjectId) searchQuery.subjectId = filters.subjectId;
-    if (filters.trackId) searchQuery.trackId = filters.trackId;
-    if (filters.subCategoryId) searchQuery.subCategoryId = filters.subCategoryId;
-    if (filters.fileType) searchQuery.fileType = filters.fileType;
+      if (filters.examId) searchQuery.examId = filters.examId;
+      if (filters.subjectId) searchQuery.subjectId = filters.subjectId;
+      if (filters.trackId) searchQuery.trackId = filters.trackId;
+      if (filters.subCategoryId) searchQuery.subCategoryId = filters.subCategoryId;
+      if (filters.fileType) searchQuery.fileType = filters.fileType;
 
-    return await Content.find(searchQuery)
-      .populate(['examId', 'subjectId', 'trackId', 'subCategoryId'])
-      .sort({ orderIndex: 1, name: 1 })
-      .limit(50);
-  } catch (error) {
-    console.error('Error searching content:', error);
-    throw error;
+      return await Content.find(searchQuery)
+        .populate(['examId', 'subjectId', 'trackId', 'subCategoryId'])
+        .sort({ orderIndex: 1, name: 1 })
+        .limit(50);
+    } catch (error) {
+      console.error('Error searching content:', error);
+      throw error;
+    }
   }
-}
 
-async getContentById(contentId) {
-  try {
-    return await Content.findById(contentId)
-      .populate(['examId', 'subjectId', 'trackId', 'subCategoryId']);
-  } catch (error) {
-    console.error('Error getting content by id:', error);
-    throw error;
+  async getContentById(contentId) {
+    try {
+      return await Content.findById(contentId)
+        .populate(['examId', 'subjectId', 'trackId', 'subCategoryId']);
+    } catch (error) {
+      console.error('Error getting content by id:', error);
+      throw error;
+    }
   }
-}
 
-async updateContent(contentId, updateData) {
-  try {
-    return await Content.findByIdAndUpdate(
-      contentId,
-      updateData,
-      { new: true }
-    ).populate(['examId', 'subjectId', 'trackId', 'subCategoryId']);
-  } catch (error) {
-    console.error('Error updating content:', error);
-    throw error;
+  async updateContent(contentId, updateData) {
+    try {
+      return await Content.findByIdAndUpdate(
+        contentId,
+        updateData,
+        { new: true }
+      ).populate(['examId', 'subjectId', 'trackId', 'subCategoryId']);
+    } catch (error) {
+      console.error('Error updating content:', error);
+      throw error;
+    }
   }
-}
 
-async deleteContent(contentId) {
-  try {
-    return await Content.findByIdAndUpdate(
-      contentId,
-      { isActive: false },
-      { new: true }
-    );
-  } catch (error) {
-    console.error('Error deleting content:', error);
-    throw error;
+  async deleteContent(contentId) {
+    try {
+      return await Content.findByIdAndUpdate(
+        contentId,
+        { isActive: false },
+        { new: true }
+      );
+    } catch (error) {
+      console.error('Error deleting content:', error);
+      throw error;
+    }
   }
-}
-
 }
 
 module.exports = {

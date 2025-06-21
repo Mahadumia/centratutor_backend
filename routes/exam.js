@@ -1,4 +1,4 @@
-// routes/exam.js - With Topics and Questions Support
+// routes/exam.js - Updated for Modified Architecture
 const express = require('express');
 const router = express.Router();
 const { ExamModel } = require('../models/exam');
@@ -75,7 +75,7 @@ router.post('/', async (req, res) => {
 
 /**
  * @route   GET /api/exams/:examId/subjects
- * @desc    Get all subjects for an exam
+ * @desc    Get all subjects for an exam (global subjects)
  * @access  Public
  */
 router.get('/:examId/subjects', async (req, res) => {
@@ -89,7 +89,7 @@ router.get('/:examId/subjects', async (req, res) => {
 
 /**
  * @route   POST /api/exams/:examId/subjects/bulk
- * @desc    Create multiple subjects for an exam
+ * @desc    Create multiple subjects for an exam (global subjects)
  * @access  Private
  */
 router.post('/:examId/subjects/bulk', async (req, res) => {
@@ -111,7 +111,7 @@ router.post('/:examId/subjects/bulk', async (req, res) => {
   }
 });
 
-// ========== NEW: TOPICS ENDPOINTS ==========
+// ========== TOPICS ENDPOINTS (unchanged) ==========
 
 /**
  * @route   GET /api/exams/:examId/subjects/:subjectId/topics
@@ -158,18 +158,18 @@ router.post('/:examId/subjects/:subjectId/topics/bulk', async (req, res) => {
   }
 });
 
-// ========== TRACKS ENDPOINTS ==========
+// ========== MODIFIED: TRACKS ENDPOINTS - Now per exam-subcategory ==========
 
 /**
- * @route   GET /api/exams/:examId/subjects/:subjectId/tracks
- * @desc    Get all tracks for a subject
+ * @route   GET /api/exams/:examId/subcategories/:subCategoryId/tracks
+ * @desc    Get all tracks for an exam-subcategory combination
  * @access  Public
  */
-router.get('/:examId/subjects/:subjectId/tracks', async (req, res) => {
+router.get('/:examId/subcategories/:subCategoryId/tracks', async (req, res) => {
   try {
-    const tracks = await examModel.getTracksBySubject(
+    const tracks = await examModel.getTracksByExamSubCategory(
       req.params.examId, 
-      req.params.subjectId
+      req.params.subCategoryId
     );
     res.json(tracks);
   } catch (error) {
@@ -178,11 +178,11 @@ router.get('/:examId/subjects/:subjectId/tracks', async (req, res) => {
 });
 
 /**
- * @route   POST /api/exams/:examId/subjects/:subjectId/tracks/bulk
- * @desc    Create multiple tracks for a subject
+ * @route   POST /api/exams/:examId/subcategories/:subCategoryId/tracks/bulk
+ * @desc    Create multiple tracks for an exam-subcategory combination
  * @access  Private
  */
-router.post('/:examId/subjects/:subjectId/tracks/bulk', async (req, res) => {
+router.post('/:examId/subcategories/:subCategoryId/tracks/bulk', async (req, res) => {
   try {
     const { tracks } = req.body;
     
@@ -190,7 +190,11 @@ router.post('/:examId/subjects/:subjectId/tracks/bulk', async (req, res) => {
       return res.status(400).json({ message: 'Tracks array is required' });
     }
     
-    const results = await examModel.createBulkTracks(req.params.examId, req.params.subjectId, tracks);
+    const results = await examModel.createBulkTracks(
+      req.params.examId, 
+      req.params.subCategoryId, 
+      tracks
+    );
     
     res.status(201).json({
       message: `Created ${results.created.length} tracks with ${results.errors.length} errors and ${results.duplicates.length} duplicates`,
@@ -201,23 +205,22 @@ router.post('/:examId/subjects/:subjectId/tracks/bulk', async (req, res) => {
   }
 });
 
-
 /**
- * @route   DELETE /api/exams/:examId/subjects/:subjectId/tracks/hard-delete
- * @desc    Permanently delete all tracks for a subject
+ * @route   DELETE /api/exams/:examId/subcategories/:subCategoryId/tracks/hard-delete
+ * @desc    Permanently delete all tracks for an exam-subcategory combination
  * @access  Private
  */
-router.delete('/:examId/subjects/:subjectId/tracks/hard-delete', async (req, res) => {
+router.delete('/:examId/subcategories/:subCategoryId/tracks/hard-delete', async (req, res) => {
   try {
     const { Track } = require('../models/exam');
     
     const result = await Track.deleteMany({
       examId: req.params.examId,
-      subjectId: req.params.subjectId
+      subCategoryId: req.params.subCategoryId
     });
     
     res.json({ 
-      message: `Permanently deleted ${result.deletedCount} tracks for subject`,
+      message: `Permanently deleted ${result.deletedCount} tracks for exam-subcategory`,
       deletedCount: result.deletedCount
     });
   } catch (error) {
@@ -245,16 +248,15 @@ router.get('/:examId/subcategories/:subCategoryId/subjects', async (req, res) =>
 });
 
 /**
- * @route   GET /api/exams/:examId/subcategories/:subCategoryId/subjects/:subjectId/tracks
- * @desc    Get tracks available for subject in subcategory
+ * @route   GET /api/exams/:examId/subcategories/:subCategoryId/tracks
+ * @desc    Get tracks available for subcategory (not tied to specific subject)
  * @access  Public
  */
-router.get('/:examId/subcategories/:subCategoryId/subjects/:subjectId/tracks', async (req, res) => {
+router.get('/:examId/subcategories/:subCategoryId/tracks', async (req, res) => {
   try {
     const tracks = await examModel.getTracksInSubCategory(
       req.params.examId,
-      req.params.subCategoryId,
-      req.params.subjectId
+      req.params.subCategoryId
     );
     res.json(tracks);
   } catch (error) {
@@ -264,7 +266,7 @@ router.get('/:examId/subcategories/:subCategoryId/subjects/:subjectId/tracks', a
 
 /**
  * @route   GET /api/exams/:examId/subcategories/:subCategoryId/subjects/:subjectId/tracks/:trackId/content
- * @desc    Get content items for specific track and subcategory (Notes/Videos)
+ * @desc    Get content items for specific subject, track and subcategory (Notes/Videos)
  * @access  Public
  */
 router.get('/:examId/subcategories/:subCategoryId/subjects/:subjectId/tracks/:trackId/content', async (req, res) => {
@@ -281,14 +283,14 @@ router.get('/:examId/subcategories/:subCategoryId/subjects/:subjectId/tracks/:tr
   }
 });
 
-// ========== NEW: PAST QUESTIONS ENDPOINTS ==========
+// ========== PAST QUESTIONS ENDPOINTS ==========
 
 /**
- * @route   GET /api/exams/:examId/pastquestions/:subjectId/tracks/:trackId/topics
- * @desc    Get topics for past questions in a specific year/track
+ * @route   GET /api/exams/:examId/pastquestions/:subjectId/topics
+ * @desc    Get topics for past questions for a specific subject
  * @access  Public
  */
-router.get('/:examId/pastquestions/:subjectId/tracks/:trackId/topics', async (req, res) => {
+router.get('/:examId/pastquestions/:subjectId/topics', async (req, res) => {
   try {
     const topics = await examModel.getTopicsBySubject(
       req.params.examId,
@@ -301,8 +303,37 @@ router.get('/:examId/pastquestions/:subjectId/tracks/:trackId/topics', async (re
 });
 
 /**
+ * @route   GET /api/exams/:examId/pastquestions/tracks
+ * @desc    Get all past question tracks (years) for an exam
+ * @access  Public
+ */
+router.get('/:examId/pastquestions/tracks', async (req, res) => {
+  try {
+    // Get pastquestions subcategory
+    const { SubCategory } = require('../models/exam');
+    const pastQuestionsSubCategory = await SubCategory.findOne({
+      examId: req.params.examId,
+      name: 'pastquestions',
+      isActive: true
+    });
+
+    if (!pastQuestionsSubCategory) {
+      return res.status(404).json({ message: 'Past questions subcategory not found' });
+    }
+
+    const tracks = await examModel.getTracksInSubCategory(
+      req.params.examId,
+      pastQuestionsSubCategory._id
+    );
+    res.json(tracks);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
  * @route   GET /api/exams/:examId/pastquestions/:subjectId/tracks/:trackId/questions
- * @desc    Get questions for specific track (year) and optional topic filters
+ * @desc    Get questions for specific subject, track (year) and optional topic filters
  * @access  Public
  */
 router.get('/:examId/pastquestions/:subjectId/tracks/:trackId/questions', async (req, res) => {
@@ -437,7 +468,7 @@ router.post('/:examId/subject-availability/bulk', async (req, res) => {
 
 /**
  * @route   GET /api/exams/:examId/user-flow
- * @desc    Get complete user flow structure (subcategory -> subject -> track -> content/topics)
+ * @desc    Get complete user flow structure (subcategory -> subjects & tracks -> content/topics)
  * @access  Public
  */
 router.get('/:examId/user-flow', async (req, res) => {
@@ -518,8 +549,8 @@ router.post('/:examId/validate-structure', async (req, res) => {
       validationResults.topicValid = topicExists;
     }
 
-    if (trackId && subjectId) {
-      const trackExists = await examModel.validateTrackExists(req.params.examId, subjectId, trackId);
+    if (trackId && subCategoryId) {
+      const trackExists = await examModel.validateTrackExists(req.params.examId, subCategoryId, trackId);
       validationResults.trackValid = trackExists;
     }
 
