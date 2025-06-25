@@ -597,7 +597,7 @@ router.post('/bulk', async (req, res) => {
 
 /**
  * NEW: Upload content to a specific week in a weekly track
- * @route   POST /api/track-content/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumber
+ * @route   POST /api/content/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumber
  * @desc    Upload content for a specific week (Week 1, Week 2, etc.)
  * @access  Private
  */
@@ -701,7 +701,7 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
 
 /**
  * NEW: Upload content to a specific day in a daily track
- * @route   POST /api/track-content/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
+ * @route   POST /api/content/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
  * @desc    Upload content for a specific day (Day 1, Day 2, etc.)
  * @access  Private
  */
@@ -805,7 +805,7 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
 
 /**
  * NEW: Upload content to a specific month in a monthly track
- * @route   POST /api/track-content/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNumber
+ * @route   POST /api/content/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNumber
  * @desc    Upload content for a specific month (Month 1, Month 2, etc.)
  * @access  Private
  */
@@ -914,7 +914,7 @@ router.post('/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNu
 
 /**
  * NEW: Upload content to a specific semester in a semester track
- * @route   POST /api/track-content/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber
+ * @route   POST /api/content/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber
  * @desc    Upload content for a specific semester (Semester 1, Semester 2, etc.)
  * @access  Private
  */
@@ -1022,7 +1022,7 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
 
 /**
  * NEW: Batch upload content to multiple weeks at once
- * @route   POST /api/track-content/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch
+ * @route   POST /api/content/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch
  * @desc    Upload content for multiple weeks in one request
  * @access  Private
  */
@@ -1083,7 +1083,7 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch', a
 
 /**
  * NEW: Batch upload content to multiple days at once
- * @route   POST /api/track-content/days/:examName/:subjectName/:trackName/:subCategoryName/batch
+ * @route   POST /api/content/days/:examName/:subjectName/:trackName/:subCategoryName/batch
  * @desc    Upload content for multiple days in one request
  * @access  Private
  */
@@ -1143,7 +1143,7 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/batch', as
 
 /**
  * NEW: Get track time periods structure
- * @route   GET /api/track-content/:examName/:subjectName/:trackName/:subCategoryName/periods
+ * @route   GET /api/content/:examName/:subjectName/:trackName/:subCategoryName/periods
  * @desc    Get available time periods for a track (weeks, days, months, etc.)
  * @access  Public
  */
@@ -1173,7 +1173,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
           number: i,
           name: `Week ${i}`,
           type: 'week',
-          uploadEndpoint: `/api/track-content/weeks/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+          uploadEndpoint: `/api/content/weeks/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
         });
       }
     } else if (trackType === 'days') {
@@ -1182,7 +1182,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
           number: i,
           name: `Day ${i}`,
           type: 'day',
-          uploadEndpoint: `/api/track-content/days/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+          uploadEndpoint: `/api/content/days/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
         });
       }
     } else if (trackType === 'months') {
@@ -1193,7 +1193,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
           number: i,
           name: monthNames[i - 1] || `Month ${i}`,
           type: 'month',
-          uploadEndpoint: `/api/track-content/months/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+          uploadEndpoint: `/api/content/months/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
         });
       }
     } else if (trackType === 'semester') {
@@ -1203,7 +1203,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
           number: i,
           name: semesterNames[i - 1] || `Semester ${i}`,
           type: 'semester',
-          uploadEndpoint: `/api/track-content/semesters/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+          uploadEndpoint: `/api/content/semesters/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
         });
       }
     }
@@ -1216,7 +1216,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
       },
       totalPeriods: periods.length,
       periods,
-      batchUploadEndpoint: `/api/track-content/${trackType}/${examName}/${subjectName}/${trackName}/${subCategoryName}/batch`
+      batchUploadEndpoint: `/api/content/${trackType}/${examName}/${subjectName}/${trackName}/${subCategoryName}/batch`
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -1225,7 +1225,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
 
 /**
  * NEW: Get content for a specific time period
- * @route   GET /api/track-content/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:periodNumber
+ * @route   GET /api/content/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:periodNumber
  * @desc    Get content for a specific week/day/month/semester
  * @access  Public
  */
