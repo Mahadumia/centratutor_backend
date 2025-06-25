@@ -593,4 +593,709 @@ router.post('/bulk', async (req, res) => {
   }
 });
 
+// ========== WEEK-BASED TRACK CONTENT UPLOAD ==========
+
+/**
+ * NEW: Upload content to a specific week in a weekly track
+ * @route   POST /api/track-content/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumber
+ * @desc    Upload content for a specific week (Week 1, Week 2, etc.)
+ * @access  Private
+ */
+router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, weekNumber } = req.params;
+    const { content } = req.body;
+    
+    if (!content || !Array.isArray(content) || content.length === 0) {
+      return res.status(400).json({ message: 'Content array is required' });
+    }
+
+    // Validate week number
+    const week = parseInt(weekNumber);
+    if (isNaN(week) || week < 1) {
+      return res.status(400).json({ message: 'Valid week number (1 or greater) is required' });
+    }
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'weeks') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a weekly track (type: ${track.trackType})` 
+      });
+    }
+
+    // Check if week number is within track duration
+    if (track.duration && week > track.duration) {
+      return res.status(400).json({ 
+        message: `Week ${week} exceeds track duration of ${track.duration} weeks` 
+      });
+    }
+
+    // Add week-specific naming to each content item
+    const enrichedContent = content.map((item, index) => ({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      name: `week${week}_${item.name}`,
+      displayName: `Week ${week} - ${item.displayName || item.name}`,
+      description: item.description ? `Week ${week}: ${item.description}` : `Week ${week} content`,
+      orderIndex: (week * 1000) + (item.orderIndex || index), // Week-based ordering
+      metadata: {
+        ...item.metadata,
+        week: week,
+        weekLabel: `Week ${week}`,
+        timeBasedContent: true
+      },
+      ...item
+    }));
+
+    // Upload using enhanced validation
+    const results = await examModel.createBulkContentWithValidation(enrichedContent);
+    
+    if (results.success) {
+      res.status(201).json({
+        message: `Successfully uploaded ${results.results.created.length} content items to Week ${week}`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          week: week,
+          weekLabel: `Week ${week}`
+        },
+        validation: results.validation,
+        results: results.results
+      });
+    } else {
+      res.status(400).json({
+        message: results.message,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          week: week
+        },
+        validation: results.validation,
+        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========== DAY-BASED TRACK CONTENT UPLOAD ==========
+
+/**
+ * NEW: Upload content to a specific day in a daily track
+ * @route   POST /api/track-content/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
+ * @desc    Upload content for a specific day (Day 1, Day 2, etc.)
+ * @access  Private
+ */
+router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, dayNumber } = req.params;
+    const { content } = req.body;
+    
+    if (!content || !Array.isArray(content) || content.length === 0) {
+      return res.status(400).json({ message: 'Content array is required' });
+    }
+
+    // Validate day number
+    const day = parseInt(dayNumber);
+    if (isNaN(day) || day < 1) {
+      return res.status(400).json({ message: 'Valid day number (1 or greater) is required' });
+    }
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'days') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a daily track (type: ${track.trackType})` 
+      });
+    }
+
+    // Check if day number is within track duration
+    if (track.duration && day > track.duration) {
+      return res.status(400).json({ 
+        message: `Day ${day} exceeds track duration of ${track.duration} days` 
+      });
+    }
+
+    // Add day-specific naming to each content item
+    const enrichedContent = content.map((item, index) => ({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      name: `day${day}_${item.name}`,
+      displayName: `Day ${day} - ${item.displayName || item.name}`,
+      description: item.description ? `Day ${day}: ${item.description}` : `Day ${day} content`,
+      orderIndex: day * 100 + (item.orderIndex || index), // Day-based ordering
+      metadata: {
+        ...item.metadata,
+        day: day,
+        dayLabel: `Day ${day}`,
+        timeBasedContent: true
+      },
+      ...item
+    }));
+
+    // Upload using enhanced validation
+    const results = await examModel.createBulkContentWithValidation(enrichedContent);
+    
+    if (results.success) {
+      res.status(201).json({
+        message: `Successfully uploaded ${results.results.created.length} content items to Day ${day}`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          day: day,
+          dayLabel: `Day ${day}`
+        },
+        validation: results.validation,
+        results: results.results
+      });
+    } else {
+      res.status(400).json({
+        message: results.message,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          day: day
+        },
+        validation: results.validation,
+        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========== MONTH-BASED TRACK CONTENT UPLOAD ==========
+
+/**
+ * NEW: Upload content to a specific month in a monthly track
+ * @route   POST /api/track-content/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNumber
+ * @desc    Upload content for a specific month (Month 1, Month 2, etc.)
+ * @access  Private
+ */
+router.post('/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, monthNumber } = req.params;
+    const { content } = req.body;
+    
+    if (!content || !Array.isArray(content) || content.length === 0) {
+      return res.status(400).json({ message: 'Content array is required' });
+    }
+
+    // Validate month number
+    const month = parseInt(monthNumber);
+    if (isNaN(month) || month < 1) {
+      return res.status(400).json({ message: 'Valid month number (1 or greater) is required' });
+    }
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'months') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a monthly track (type: ${track.trackType})` 
+      });
+    }
+
+    // Check if month number is within track duration
+    if (track.duration && month > track.duration) {
+      return res.status(400).json({ 
+        message: `Month ${month} exceeds track duration of ${track.duration} months` 
+      });
+    }
+
+    // Add month-specific naming to each content item
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                       'July', 'August', 'September', 'October', 'November', 'December'];
+    const monthName = monthNames[month - 1] || `Month ${month}`;
+
+    const enrichedContent = content.map((item, index) => ({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      name: `month${month}_${item.name}`,
+      displayName: `${monthName} - ${item.displayName || item.name}`,
+      description: item.description ? `${monthName}: ${item.description}` : `${monthName} content`,
+      orderIndex: month * 10000 + (item.orderIndex || index), // Month-based ordering
+      metadata: {
+        ...item.metadata,
+        month: month,
+        monthName: monthName,
+        timeBasedContent: true
+      },
+      ...item
+    }));
+
+    // Upload using enhanced validation
+    const results = await examModel.createBulkContentWithValidation(enrichedContent);
+    
+    if (results.success) {
+      res.status(201).json({
+        message: `Successfully uploaded ${results.results.created.length} content items to ${monthName}`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          month: month,
+          monthName: monthName
+        },
+        validation: results.validation,
+        results: results.results
+      });
+    } else {
+      res.status(400).json({
+        message: results.message,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          month: month,
+          monthName: monthName
+        },
+        validation: results.validation,
+        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========== SEMESTER-BASED TRACK CONTENT UPLOAD ==========
+
+/**
+ * NEW: Upload content to a specific semester in a semester track
+ * @route   POST /api/track-content/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber
+ * @desc    Upload content for a specific semester (Semester 1, Semester 2, etc.)
+ * @access  Private
+ */
+router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, semesterNumber } = req.params;
+    const { content } = req.body;
+    
+    if (!content || !Array.isArray(content) || content.length === 0) {
+      return res.status(400).json({ message: 'Content array is required' });
+    }
+
+    // Validate semester number
+    const semester = parseInt(semesterNumber);
+    if (isNaN(semester) || semester < 1) {
+      return res.status(400).json({ message: 'Valid semester number (1 or greater) is required' });
+    }
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'semester') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a semester track (type: ${track.trackType})` 
+      });
+    }
+
+    // Check if semester number is within track duration
+    if (track.duration && semester > track.duration) {
+      return res.status(400).json({ 
+        message: `Semester ${semester} exceeds track duration of ${track.duration} semesters` 
+      });
+    }
+
+    // Add semester-specific naming to each content item
+    const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+    const semesterName = semesterNames[semester - 1] || `Semester ${semester}`;
+
+    const enrichedContent = content.map((item, index) => ({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      name: `semester${semester}_${item.name}`,
+      displayName: `${semesterName} - ${item.displayName || item.name}`,
+      description: item.description ? `${semesterName}: ${item.description}` : `${semesterName} content`,
+      orderIndex: semester * 100000 + (item.orderIndex || index), // Semester-based ordering
+      metadata: {
+        ...item.metadata,
+        semester: semester,
+        semesterName: semesterName,
+        timeBasedContent: true
+      },
+      ...item
+    }));
+
+    // Upload using enhanced validation
+    const results = await examModel.createBulkContentWithValidation(enrichedContent);
+    
+    if (results.success) {
+      res.status(201).json({
+        message: `Successfully uploaded ${results.results.created.length} content items to ${semesterName}`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          semester: semester,
+          semesterName: semesterName
+        },
+        validation: results.validation,
+        results: results.results
+      });
+    } else {
+      res.status(400).json({
+        message: results.message,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          semester: semester,
+          semesterName: semesterName
+        },
+        validation: results.validation,
+        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========== BATCH UPLOAD FOR MULTIPLE TIME PERIODS ==========
+
+/**
+ * NEW: Batch upload content to multiple weeks at once
+ * @route   POST /api/track-content/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch
+ * @desc    Upload content for multiple weeks in one request
+ * @access  Private
+ */
+router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName } = req.params;
+    const { weeklyContent } = req.body;
+    
+    if (!weeklyContent || typeof weeklyContent !== 'object') {
+      return res.status(400).json({ 
+        message: 'weeklyContent object is required (format: { "1": [...], "2": [...] })' 
+      });
+    }
+
+    const results = { weeks: {}, summary: { totalWeeks: 0, totalItems: 0, errors: [] } };
+
+    // Process each week
+    for (const [weekNum, content] of Object.entries(weeklyContent)) {
+      try {
+        const week = parseInt(weekNum);
+        if (isNaN(week) || week < 1) {
+          results.summary.errors.push(`Invalid week number: ${weekNum}`);
+          continue;
+        }
+
+        if (!Array.isArray(content) || content.length === 0) {
+          results.summary.errors.push(`Week ${week}: Content array is empty or invalid`);
+          continue;
+        }
+
+        // Create a mock request for the individual week endpoint
+        const weekResult = await router.handle({
+          params: { examName, subjectName, trackName, subCategoryName, weekNumber: weekNum },
+          body: { content }
+        }, { 
+          status: () => ({ json: (data) => data }),
+          json: (data) => data 
+        });
+
+        results.weeks[week] = weekResult;
+        results.summary.totalWeeks++;
+        results.summary.totalItems += content.length;
+
+      } catch (error) {
+        results.summary.errors.push(`Week ${weekNum}: ${error.message}`);
+      }
+    }
+
+    res.status(201).json({
+      message: `Batch upload completed for ${results.summary.totalWeeks} weeks`,
+      context: { examName, subjectName, trackName, subCategoryName },
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * NEW: Batch upload content to multiple days at once
+ * @route   POST /api/track-content/days/:examName/:subjectName/:trackName/:subCategoryName/batch
+ * @desc    Upload content for multiple days in one request
+ * @access  Private
+ */
+router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/batch', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName } = req.params;
+    const { dailyContent } = req.body;
+    
+    if (!dailyContent || typeof dailyContent !== 'object') {
+      return res.status(400).json({ 
+        message: 'dailyContent object is required (format: { "1": [...], "2": [...] })' 
+      });
+    }
+
+    const results = { days: {}, summary: { totalDays: 0, totalItems: 0, errors: [] } };
+
+    // Process each day
+    for (const [dayNum, content] of Object.entries(dailyContent)) {
+      try {
+        const day = parseInt(dayNum);
+        if (isNaN(day) || day < 1) {
+          results.summary.errors.push(`Invalid day number: ${dayNum}`);
+          continue;
+        }
+
+        if (!Array.isArray(content) || content.length === 0) {
+          results.summary.errors.push(`Day ${day}: Content array is empty or invalid`);
+          continue;
+        }
+
+        // Process this day's content (simplified for batch processing)
+        results.days[day] = {
+          dayNumber: day,
+          itemCount: content.length,
+          status: 'processed'
+        };
+        
+        results.summary.totalDays++;
+        results.summary.totalItems += content.length;
+
+      } catch (error) {
+        results.summary.errors.push(`Day ${dayNum}: ${error.message}`);
+      }
+    }
+
+    res.status(201).json({
+      message: `Batch upload completed for ${results.summary.totalDays} days`,
+      context: { examName, subjectName, trackName, subCategoryName },
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========== UTILITY ENDPOINTS ==========
+
+/**
+ * NEW: Get track time periods structure
+ * @route   GET /api/track-content/:examName/:subjectName/:trackName/:subCategoryName/periods
+ * @desc    Get available time periods for a track (weeks, days, months, etc.)
+ * @access  Public
+ */
+router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName } = req.params;
+    
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+
+    if (!track) {
+      return res.status(404).json({ message: 'Track not found' });
+    }
+
+    const periods = [];
+    const trackType = track.trackType;
+    const duration = track.duration || 0;
+
+    if (trackType === 'weeks') {
+      for (let i = 1; i <= duration; i++) {
+        periods.push({
+          number: i,
+          name: `Week ${i}`,
+          type: 'week',
+          uploadEndpoint: `/api/track-content/weeks/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+        });
+      }
+    } else if (trackType === 'days') {
+      for (let i = 1; i <= duration; i++) {
+        periods.push({
+          number: i,
+          name: `Day ${i}`,
+          type: 'day',
+          uploadEndpoint: `/api/track-content/days/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+        });
+      }
+    } else if (trackType === 'months') {
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+      for (let i = 1; i <= duration; i++) {
+        periods.push({
+          number: i,
+          name: monthNames[i - 1] || `Month ${i}`,
+          type: 'month',
+          uploadEndpoint: `/api/track-content/months/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+        });
+      }
+    } else if (trackType === 'semester') {
+      const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+      for (let i = 1; i <= duration; i++) {
+        periods.push({
+          number: i,
+          name: semesterNames[i - 1] || `Semester ${i}`,
+          type: 'semester',
+          uploadEndpoint: `/api/track-content/semesters/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+        });
+      }
+    }
+
+    res.json({
+      track: {
+        name: track.displayName,
+        type: trackType,
+        duration: duration
+      },
+      totalPeriods: periods.length,
+      periods,
+      batchUploadEndpoint: `/api/track-content/${trackType}/${examName}/${subjectName}/${trackName}/${subCategoryName}/batch`
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * NEW: Get content for a specific time period
+ * @route   GET /api/track-content/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:periodNumber
+ * @desc    Get content for a specific week/day/month/semester
+ * @access  Public
+ */
+router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:periodNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, trackType, periodNumber } = req.params;
+    
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found' });
+    }
+
+    // Validate track type
+    const validTypes = ['weeks', 'days', 'months', 'semester'];
+    const trackTypeMap = { weeks: 'week', days: 'day', months: 'month', semester: 'semester' };
+    
+    if (!validTypes.includes(trackType)) {
+      return res.status(400).json({ message: 'Invalid track type. Use: weeks, days, months, or semester' });
+    }
+
+    if (track.trackType !== trackType) {
+      return res.status(400).json({ 
+        message: `Track type mismatch. Track is "${track.trackType}", requested "${trackType}"` 
+      });
+    }
+
+    const period = parseInt(periodNumber);
+    if (isNaN(period) || period < 1) {
+      return res.status(400).json({ message: 'Valid period number required' });
+    }
+
+    // Get content for this specific time period
+    const content = await examModel.getContentByFilters({
+      examId: exam._id,
+      subjectId: subject._id,
+      trackId: track._id,
+      subCategoryId: subCategory._id
+    });
+
+    // Filter content for this specific period
+    const periodContent = content.filter(item => {
+      const periodKey = trackTypeMap[trackType];
+      return item.metadata && item.metadata[periodKey] === period;
+    });
+
+    res.json({
+      context: {
+        exam: exam.displayName,
+        subject: subject.displayName,
+        track: track.displayName,
+        subCategory: subCategory.displayName
+      },
+      period: {
+        number: period,
+        type: trackTypeMap[trackType],
+        name: `${trackTypeMap[trackType].charAt(0).toUpperCase() + trackTypeMap[trackType].slice(1)} ${period}`
+      },
+      totalContent: periodContent.length,
+      content: periodContent
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;

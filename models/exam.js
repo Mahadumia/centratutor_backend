@@ -586,7 +586,491 @@ class ExamModel {
       throw error;
     }
   }
+// Add these methods to your ExamModel class in models/exam.js
 
+// ========== TIME-BASED CONTENT METHODS ==========
+
+/**
+ * NEW: Get content grouped by time periods (weeks, days, months, semesters)
+ */
+async getContentByTimePeriods(examId, subjectId, trackId, subCategoryId) {
+  try {
+    // Get the track to determine type
+    const track = await Track.findById(trackId);
+    if (!track) {
+      throw new Error('Track not found');
+    }
+
+    // Get all content for this track
+    const allContent = await Content.find({
+      examId,
+      subjectId,
+      trackId,
+      subCategoryId,
+      isActive: true
+    }).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId'])
+      .sort({ orderIndex: 1, name: 1 });
+
+    // Group content by time periods based on track type
+    const timeGroups = {};
+    const trackType = track.trackType;
+
+    allContent.forEach(content => {
+      let timeKey = 'ungrouped';
+      let timeName = 'Ungrouped';
+
+      if (content.metadata && content.metadata.timeBasedContent) {
+        // Use metadata time information
+        if (trackType === 'weeks' && content.metadata.week) {
+          timeKey = `week_${content.metadata.week}`;
+          timeName = `Week ${content.metadata.week}`;
+        } else if (trackType === 'days' && content.metadata.day) {
+          timeKey = `day_${content.metadata.day}`;
+          timeName = `Day ${content.metadata.day}`;
+        } else if (trackType === 'months' && content.metadata.month) {
+          timeKey = `month_${content.metadata.month}`;
+          timeName = content.metadata.monthName || `Month ${content.metadata.month}`;
+        } else if (trackType === 'semester' && content.metadata.semester) {
+          timeKey = `semester_${content.metadata.semester}`;
+          timeName = content.metadata.semesterName || `Semester ${content.metadata.semester}`;
+        }
+      } else {
+        // Fallback: try to extract from name
+        if (trackType === 'weeks') {
+          const weekMatch = content.name.match(/week(\d+)/i);
+          if (weekMatch) {
+            const weekNum = parseInt(weekMatch[1]);
+            timeKey = `week_${weekNum}`;
+            timeName = `Week ${weekNum}`;
+          }
+        } else if (trackType === 'days') {
+          const dayMatch = content.name.match(/day(\d+)/i);
+          if (dayMatch) {
+            const dayNum = parseInt(dayMatch[1]);
+            timeKey = `day_${dayNum}`;
+            timeName = `Day ${dayNum}`;
+          }
+        } else if (trackType === 'months') {
+          const monthMatch = content.name.match(/month(\d+)/i);
+          if (monthMatch) {
+            const monthNum = parseInt(monthMatch[1]);
+            timeKey = `month_${monthNum}`;
+            timeName = `Month ${monthNum}`;
+          }
+        } else if (trackType === 'semester') {
+          const semesterMatch = content.name.match(/semester(\d+)/i);
+          if (semesterMatch) {
+            const semesterNum = parseInt(semesterMatch[1]);
+            timeKey = `semester_${semesterNum}`;
+            timeName = `Semester ${semesterNum}`;
+          }
+        }
+      }
+
+      if (!timeGroups[timeKey]) {
+        timeGroups[timeKey] = {
+          timeKey,
+          timeName,
+          timeType: trackType,
+          timeNumber: timeKey === 'ungrouped' ? 0 : parseInt(timeKey.split('_')[1]),
+          content: []
+        };
+      }
+
+      timeGroups[timeKey].content.push(content);
+    });
+
+    // Convert to array and sort by time number
+    const sortedTimeGroups = Object.values(timeGroups).sort((a, b) => {
+      if (a.timeNumber === 0) return 1; // Put ungrouped at end
+      if (b.timeNumber === 0) return -1;
+      return a.timeNumber - b.timeNumber;
+    });
+
+    return {
+      track: {
+        id: track._id,
+        name: track.displayName,
+        type: trackType,
+        duration: track.duration
+      },
+      totalContent: allContent.length,
+      totalTimePeriods: sortedTimeGroups.length,
+      contentByTimePeriods: sortedTimeGroups
+    };
+  } catch (error) {
+    console.error('Error getting content by time periods:', error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Get content for a specific time period
+ */
+async getContentForTimePeriod(examId, subjectId, trackId, subCategoryId, timeType, timeNumber) {
+  try {
+    const track = await Track.findById(trackId);
+    if (!track) {
+      throw new Error('Track not found');
+    }
+
+    if (track.trackType !== timeType) {
+      throw new Error(`Track type mismatch. Expected ${timeType}, got ${track.trackType}`);
+    }
+
+    // Get all content for this track
+    const allContent = await Content.find({
+      examId,
+      subjectId,
+      trackId,
+      subCategoryId,
+      isActive: true
+    }).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId'])
+      .sort({ orderIndex: 1, name: 1 });
+
+    // Filter content for the specific time period
+    const timeContent = allContent.filter(content => {
+      // Check metadata first
+      if (content.metadata && content.metadata.timeBasedContent) {
+        const timeKey = timeType === 'weeks' ? 'week' :
+                       timeType === 'days' ? 'day' :
+                       timeType === 'months' ? 'month' :
+                       timeType === 'semester' ? 'semester' : null;
+        
+        if (timeKey && content.metadata[timeKey] === timeNumber) {
+          return true;
+        }
+      }
+
+      // Fallback: check name pattern
+      const timePattern = new RegExp(`${timeType.slice(0, -1)}${timeNumber}`, 'i');
+      return timePattern.test(content.name);
+    });
+
+    // Get time period name
+    let timeName = `${timeType.charAt(0).toUpperCase() + timeType.slice(1, -1)} ${timeNumber}`;
+    if (timeType === 'months') {
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+      timeName = monthNames[timeNumber - 1] || timeName;
+    } else if (timeType === 'semester') {
+      const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+      timeName = semesterNames[timeNumber - 1] || timeName;
+    }
+
+    // Group by topics if there are multiple topics
+    const contentByTopics = {};
+    timeContent.forEach(content => {
+      const topicKey = content.topicId ? content.topicId._id.toString() : 'no_topic';
+      const topicName = content.topicId ? content.topicId.displayName : 'No Topic';
+      
+      if (!contentByTopics[topicKey]) {
+        contentByTopics[topicKey] = {
+          topic: content.topicId ? content.topicId : null,
+          topicName,
+          content: []
+        };
+      }
+      contentByTopics[topicKey].content.push(content);
+    });
+
+    return {
+      timePeriod: {
+        type: timeType,
+        number: timeNumber,
+        name: timeName
+      },
+      track: {
+        id: track._id,
+        name: track.displayName,
+        type: track.trackType,
+        duration: track.duration
+      },
+      totalContent: timeContent.length,
+      totalTopics: Object.keys(contentByTopics).length,
+      content: timeContent,
+      contentByTopics: Object.values(contentByTopics)
+    };
+  } catch (error) {
+    console.error('Error getting content for time period:', error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Generate time period structure for a track
+ */
+async getTrackTimePeriods(examId, subCategoryId, trackId) {
+  try {
+    const track = await Track.findById(trackId);
+    if (!track) {
+      throw new Error('Track not found');
+    }
+
+    const periods = [];
+    const trackType = track.trackType;
+    const duration = track.duration || 0;
+
+    // Get content count for each period
+    const allContent = await Content.find({
+      examId,
+      trackId,
+      subCategoryId,
+      isActive: true
+    });
+
+    for (let i = 1; i <= duration; i++) {
+      let periodName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1, -1)} ${i}`;
+      
+      if (trackType === 'months') {
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                           'July', 'August', 'September', 'October', 'November', 'December'];
+        periodName = monthNames[i - 1] || periodName;
+      } else if (trackType === 'semester') {
+        const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+        periodName = semesterNames[i - 1] || periodName;
+      }
+
+      // Count content for this period
+      const periodContent = allContent.filter(content => {
+        // Check metadata
+        if (content.metadata && content.metadata.timeBasedContent) {
+          const timeKey = trackType === 'weeks' ? 'week' :
+                         trackType === 'days' ? 'day' :
+                         trackType === 'months' ? 'month' :
+                         trackType === 'semester' ? 'semester' : null;
+          
+          if (timeKey && content.metadata[timeKey] === i) {
+            return true;
+          }
+        }
+
+        // Check name pattern
+        const timePattern = new RegExp(`${trackType.slice(0, -1)}${i}`, 'i');
+        return timePattern.test(content.name);
+      });
+
+      periods.push({
+        number: i,
+        name: periodName,
+        type: trackType.slice(0, -1), // Remove 's' from end
+        contentCount: periodContent.length,
+        hasContent: periodContent.length > 0
+      });
+    }
+
+    return {
+      track: {
+        id: track._id,
+        name: track.displayName,
+        type: trackType,
+        duration: duration
+      },
+      totalPeriods: periods.length,
+      periods
+    };
+  } catch (error) {
+    console.error('Error getting track time periods:', error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Get track progress/completion status
+ */
+async getTrackProgress(examId, subjectId, trackId, subCategoryId) {
+  try {
+    const track = await Track.findById(trackId);
+    if (!track) {
+      throw new Error('Track not found');
+    }
+
+    const periods = await this.getTrackTimePeriods(examId, subCategoryId, trackId);
+    
+    const totalPeriods = periods.totalPeriods;
+    const periodsWithContent = periods.periods.filter(p => p.hasContent).length;
+    const emptyPeriods = totalPeriods - periodsWithContent;
+    
+    const progressPercentage = totalPeriods > 0 ? 
+      Math.round((periodsWithContent / totalPeriods) * 100) : 0;
+
+    // Get total content count
+    const totalContent = await Content.countDocuments({
+      examId,
+      subjectId,
+      trackId,
+      subCategoryId,
+      isActive: true
+    });
+
+    return {
+      track: periods.track,
+      progress: {
+        totalPeriods,
+        periodsWithContent,
+        emptyPeriods,
+        progressPercentage,
+        totalContent,
+        status: progressPercentage === 100 ? 'complete' : 
+                progressPercentage > 0 ? 'in_progress' : 'empty'
+      },
+      periods: periods.periods
+    };
+  } catch (error) {
+    console.error('Error getting track progress:', error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Bulk update content time periods
+ */
+async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
+  try {
+    const track = await Track.findById(trackId);
+    if (!track) {
+      throw new Error('Track not found');
+    }
+
+    const trackType = track.trackType;
+    if (!['weeks', 'days', 'months', 'semester'].includes(trackType)) {
+      return { message: 'Track type does not support time periods', updated: 0 };
+    }
+
+    // Get all content for this track
+    const allContent = await Content.find({
+      examId,
+      subjectId,
+      trackId,
+      subCategoryId,
+      isActive: true
+    });
+
+    let updateCount = 0;
+
+    for (const content of allContent) {
+      let timeNumber = null;
+      let timeName = null;
+      let timeKey = null;
+
+      // Extract time information from name
+      if (trackType === 'weeks') {
+        const weekMatch = content.name.match(/week(\d+)/i);
+        if (weekMatch) {
+          timeNumber = parseInt(weekMatch[1]);
+          timeName = `Week ${timeNumber}`;
+          timeKey = 'week';
+        }
+      } else if (trackType === 'days') {
+        const dayMatch = content.name.match(/day(\d+)/i);
+        if (dayMatch) {
+          timeNumber = parseInt(dayMatch[1]);
+          timeName = `Day ${timeNumber}`;
+          timeKey = 'day';
+        }
+      } else if (trackType === 'months') {
+        const monthMatch = content.name.match(/month(\d+)/i);
+        if (monthMatch) {
+          timeNumber = parseInt(monthMatch[1]);
+          const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                             'July', 'August', 'September', 'October', 'November', 'December'];
+          timeName = monthNames[timeNumber - 1] || `Month ${timeNumber}`;
+          timeKey = 'month';
+        }
+      } else if (trackType === 'semester') {
+        const semesterMatch = content.name.match(/semester(\d+)/i);
+        if (semesterMatch) {
+          timeNumber = parseInt(semesterMatch[1]);
+          const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+          timeName = semesterNames[timeNumber - 1] || `Semester ${timeNumber}`;
+          timeKey = 'semester';
+        }
+      }
+
+      // Update metadata if time information was found
+      if (timeNumber && timeKey) {
+        const updatedMetadata = {
+          ...content.metadata,
+          timeBasedContent: true,
+          [timeKey]: timeNumber,
+          [`${timeKey}Name`]: timeName
+        };
+
+        await Content.findByIdAndUpdate(content._id, {
+          metadata: updatedMetadata
+        });
+
+        updateCount++;
+      }
+    }
+
+    return {
+      message: `Updated ${updateCount} content items with time period metadata`,
+      updated: updateCount,
+      total: allContent.length,
+      trackType
+    };
+  } catch (error) {
+    console.error('Error updating content time periods:', error);
+    throw error;
+  }
+}
+
+/**
+ * NEW: Get time-based content summary for dashboard
+ */
+async getTimeBasedContentSummary(examId) {
+  try {
+    const tracks = await Track.find({ examId, isActive: true })
+      .populate(['examId', 'subCategoryId']);
+
+    const summary = {
+      totalTracks: tracks.length,
+      tracksByType: {},
+      tracksWithContent: 0,
+      tracksEmpty: 0,
+      totalContentItems: 0
+    };
+
+    for (const track of tracks) {
+      const trackType = track.trackType;
+      
+      if (!summary.tracksByType[trackType]) {
+        summary.tracksByType[trackType] = {
+          count: 0,
+          totalDuration: 0,
+          withContent: 0,
+          empty: 0
+        };
+      }
+
+      summary.tracksByType[trackType].count++;
+      summary.tracksByType[trackType].totalDuration += track.duration || 0;
+
+      // Check if track has content
+      const contentCount = await Content.countDocuments({
+        examId,
+        trackId: track._id,
+        isActive: true
+      });
+
+      summary.totalContentItems += contentCount;
+
+      if (contentCount > 0) {
+        summary.tracksWithContent++;
+        summary.tracksByType[trackType].withContent++;
+      } else {
+        summary.tracksEmpty++;
+        summary.tracksByType[trackType].empty++;
+      }
+    }
+
+    return summary;
+  } catch (error) {
+    console.error('Error getting time-based content summary:', error);
+    throw error;
+  }
+}
   // ========== ENHANCED TOPIC MANAGEMENT METHODS ==========
   
   /**
