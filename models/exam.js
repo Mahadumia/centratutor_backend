@@ -586,6 +586,7 @@ class ExamModel {
       throw error;
     }
   }
+
 // Add these methods to your ExamModel class in models/exam.js
 
 // ========== TIME-BASED CONTENT METHODS ==========
@@ -1071,6 +1072,7 @@ async getTimeBasedContentSummary(examId) {
     throw error;
   }
 }
+
   // ========== ENHANCED TOPIC MANAGEMENT METHODS ==========
   
   /**
@@ -1864,7 +1866,6 @@ async getTimeBasedContentSummary(examId) {
     }
   }
 
-
 async createBulkQuestions(questionsArray) {
   try {
     const results = { created: [], errors: [], duplicates: [] };
@@ -1949,6 +1950,7 @@ async createBulkQuestions(questionsArray) {
     throw error;
   }
 }
+
   async getQuestionsByFilters(filters) {
     try {
       const query = { isActive: true };
@@ -2310,8 +2312,8 @@ async getCompleteUserFlow(examId) {
       const stats = await Topic.aggregate([
         { 
           $match: { 
-            examId: examId ? mongoose.Types.ObjectId(examId) : { $exists: true },
-            subjectId: subjectId ? mongoose.Types.ObjectId(subjectId) : { $exists: true },
+            examId: examId ? new mongoose.Types.ObjectId(examId) : { $exists: true },
+            subjectId: subjectId ? new mongoose.Types.ObjectId(subjectId) : { $exists: true },
             isActive: true 
           } 
         },
@@ -2354,194 +2356,6 @@ async getCompleteUserFlow(examId) {
       throw error;
     }
   }
-
-
-
-/**
- * NEW: Get topics that have actual content for a specific track
- */
-async getTopicsWithContentForTrack(examId, subjectId, trackId, subCategoryId) {
-  try {
-    // Get all content for the specific track
-    const content = await Content.find({
-      examId,
-      subjectId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    }).populate('topicId');
-
-    // Extract unique topics from the content
-    const topicsWithContent = [];
-    const topicIds = new Set();
-
-    content.forEach(contentItem => {
-      if (contentItem.topicId && !topicIds.has(contentItem.topicId._id.toString())) {
-        topicIds.add(contentItem.topicId._id.toString());
-        topicsWithContent.push({
-          ...contentItem.topicId.toObject(),
-          contentCount: 0 // Will be calculated below
-        });
-      }
-    });
-
-    // Count content per topic
-    topicsWithContent.forEach(topic => {
-      topic.contentCount = content.filter(c => 
-        c.topicId._id.toString() === topic._id.toString()
-      ).length;
-    });
-
-    // Sort by orderIndex and name
-    topicsWithContent.sort((a, b) => {
-      if (a.orderIndex !== b.orderIndex) {
-        return (a.orderIndex || 0) - (b.orderIndex || 0);
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-    return topicsWithContent;
-  } catch (error) {
-    console.error('Error getting topics with content for track:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Get topics that have questions for a specific track (for past questions)
- */
-async getTopicsWithQuestionsForTrack(examId, subjectId, trackId) {
-  try {
-    // Get all questions for the specific track
-    const questions = await Question.find({
-      examId,
-      subjectId,
-      trackId,
-      isActive: true
-    }).populate('topicId');
-
-    // Extract unique topics from the questions
-    const topicsWithQuestions = [];
-    const topicIds = new Set();
-
-    questions.forEach(question => {
-      if (question.topicId && !topicIds.has(question.topicId._id.toString())) {
-        topicIds.add(question.topicId._id.toString());
-        topicsWithQuestions.push({
-          ...question.topicId.toObject(),
-          questionCount: 0 // Will be calculated below
-        });
-      }
-    });
-
-    // Count questions per topic
-    topicsWithQuestions.forEach(topic => {
-      topic.questionCount = questions.filter(q => 
-        q.topicId._id.toString() === topic._id.toString()
-      ).length;
-    });
-
-    // Sort by orderIndex and name
-    topicsWithQuestions.sort((a, b) => {
-      if (a.orderIndex !== b.orderIndex) {
-        return (a.orderIndex || 0) - (b.orderIndex || 0);
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-    return topicsWithQuestions;
-  } catch (error) {
-    console.error('Error getting topics with questions for track:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Get content grouped by track-specific topics
- */
-async getContentGroupedByTrackTopics(examId, subjectId, trackId, subCategoryId) {
-  try {
-    // Get topics that have content for this track
-    const topicsWithContent = await this.getTopicsWithContentForTrack(
-      examId, subjectId, trackId, subCategoryId
-    );
-
-    // Get all content for the track
-    const allContent = await Content.find({
-      examId,
-      subjectId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    }).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId'])
-      .sort({ orderIndex: 1, name: 1 });
-
-    // Group content by topics (only topics that have content)
-    const contentByTopics = {};
-
-    topicsWithContent.forEach(topic => {
-      contentByTopics[topic._id.toString()] = {
-        topic: topic,
-        content: allContent.filter(content => 
-          content.topicId._id.toString() === topic._id.toString()
-        )
-      };
-    });
-
-    return {
-      topicsWithContent: topicsWithContent,
-      contentByTopics: Object.values(contentByTopics),
-      totalTopics: topicsWithContent.length,
-      totalContent: allContent.length
-    };
-  } catch (error) {
-    console.error('Error getting content grouped by track topics:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Get questions grouped by track-specific topics
- */
-async getQuestionsGroupedByTrackTopics(examId, subjectId, trackId) {
-  try {
-    // Get topics that have questions for this track
-    const topicsWithQuestions = await this.getTopicsWithQuestionsForTrack(
-      examId, subjectId, trackId
-    );
-
-    // Get all questions for the track
-    const allQuestions = await Question.find({
-      examId,
-      subjectId,
-      trackId,
-      isActive: true
-    }).populate(['examId', 'subjectId', 'trackId', 'topicId'])
-      .sort({ orderIndex: 1, _id: 1 });
-
-    // Group questions by topics (only topics that have questions)
-    const questionsByTopics = {};
-
-    topicsWithQuestions.forEach(topic => {
-      questionsByTopics[topic._id.toString()] = {
-        topic: topic,
-        questions: allQuestions.filter(question => 
-          question.topicId._id.toString() === topic._id.toString()
-        )
-      };
-    });
-
-    return {
-      topicsWithQuestions: topicsWithQuestions,
-      questionsByTopics: Object.values(questionsByTopics),
-      totalTopics: topicsWithQuestions.length,
-      totalQuestions: allQuestions.length
-    };
-  } catch (error) {
-    console.error('Error getting questions grouped by track topics:', error);
-    throw error;
-  }
-}
 
   // Additional utility methods
   async searchContent(query, filters = {}) {

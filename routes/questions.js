@@ -429,8 +429,18 @@ router.post('/validate-upload', async (req, res) => {
     validationResults.subjectValid = await examModel.validateSubjectExists(examId, subjectId);
     
     if (trackId) {
-      // Validate track exists
-      validationResults.trackValid = await examModel.validateTrackExists(examId, subjectId, trackId);
+      // Validate track exists - Fixed parameter order
+      const { SubCategory } = require('../models/exam');
+      const pastQuestionsSubCategory = await SubCategory.findOne({
+        examId: examId,
+        name: 'pastquestions'
+      });
+      
+      if (pastQuestionsSubCategory) {
+        validationResults.trackValid = await examModel.validateTrackExists(examId, pastQuestionsSubCategory._id, trackId);
+      } else {
+        validationResults.trackValid = false;
+      }
     }
     
     if (topicId) {

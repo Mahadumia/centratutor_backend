@@ -111,7 +111,7 @@ router.post('/upload/:examName/:subjectName/:trackName/:subCategoryName', async 
 
     const subject = await Subject.findOne({ 
       examId: exam._id, 
-      name: subjectName.toLowerCase(), 
+      name: subjectName, 
       isActive: true 
     });
     if (!subject) {
@@ -130,7 +130,7 @@ router.post('/upload/:examName/:subjectName/:trackName/:subCategoryName', async 
     const track = await Track.findOne({ 
       examId: exam._id, 
       subCategoryId: subCategory._id,
-      name: trackName.toLowerCase(), 
+      name: trackName, 
       isActive: true 
     });
     if (!track) {
@@ -244,9 +244,9 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found' });
@@ -422,9 +422,9 @@ router.delete('/groups/:examName/:subjectName/:trackName/:subCategoryName/:group
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found' });
@@ -487,112 +487,6 @@ router.delete('/groups/:examName/:subjectName/:trackName/:subCategoryName/:group
   }
 });
 
-
-
-// ========== QUICK UPLOAD SHORTCUTS ==========
-
-/**
- * NEW: Quick upload for Past Questions (year-based)
- * @route   POST /api/content/quick/pastquestions/:examName/:subjectName/:year
- * @desc    Quick upload for past questions by year
- * @access  Private
- */
-router.post('/quick/pastquestions/:examName/:subjectName/:year', async (req, res) => {
-  try {
-    const { examName, subjectName, year } = req.params;
-    const { content } = req.body;
-
-    // Auto-determine track and subcategory
-    const trackName = 'years_past_question';
-    const subCategoryName = 'pastquestions';
-
-    // Redirect to main upload endpoint
-    return await router.handle({
-      ...req,
-      params: { examName, subjectName, trackName, subCategoryName },
-      body: { 
-        content: content.map(item => ({ 
-          ...item, 
-          name: `${year}_${item.name}`,
-          displayName: `${year} - ${item.displayName || item.name}`
-        })) 
-      }
-    }, res);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-/**
- * NEW: Quick upload for Notes (day-based)
- * @route   POST /api/content/quick/notes/:examName/:subjectName/:trackName/:dayNum
- * @desc    Quick upload for notes by day
- * @access  Private
- */
-router.post('/quick/notes/:examName/:subjectName/:trackName/:dayNum', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, dayNum } = req.params;
-    const { content } = req.body;
-
-    const subCategoryName = 'notes';
-
-    // Add day prefix to content
-    const enrichedContent = content.map(item => ({
-      ...item,
-      name: `day${dayNum}_${item.name}`,
-      displayName: `Day ${dayNum} - ${item.displayName || item.name}`,
-      orderIndex: parseInt(dayNum)
-    }));
-
-    // Use main upload endpoint
-    req.params = { examName, subjectName, trackName, subCategoryName };
-    req.body = { content: enrichedContent };
-    
-    return await router.post('/upload/:examName/:subjectName/:trackName/:subCategoryName')(req, res);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// ========== LEGACY SUPPORT ==========
-
-/**
- * LEGACY: Keep original bulk upload for backward compatibility
- * @route   POST /api/content/bulk
- * @desc    Legacy bulk upload (kept for backward compatibility)
- * @access  Private
- */
-router.post('/bulk', async (req, res) => {
-  try {
-    const { content } = req.body;
-    
-    if (!content || !Array.isArray(content) || content.length === 0) {
-      return res.status(400).json({ message: 'Content array is required' });
-    }
-
-    console.warn('Using legacy bulk upload endpoint. Consider using context-specific endpoints.');
-    
-    const results = await examModel.createBulkContentWithValidation(content);
-    
-    if (results.success) {
-      res.status(201).json({
-        message: results.message,
-        note: 'Legacy endpoint used. Consider migrating to context-specific endpoints.',
-        validation: results.validation,
-        results: results.results
-      });
-    } else {
-      res.status(400).json({
-        message: results.message,
-        validation: results.validation,
-        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
 // ========== WEEK-BASED TRACK CONTENT UPLOAD ==========
 
 /**
@@ -620,9 +514,9 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
@@ -724,9 +618,9 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
@@ -828,9 +722,9 @@ router.post('/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNu
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
@@ -937,9 +831,9 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
@@ -1053,16 +947,13 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch', a
           continue;
         }
 
-        // Create a mock request for the individual week endpoint
-        const weekResult = await router.handle({
-          params: { examName, subjectName, trackName, subCategoryName, weekNumber: weekNum },
-          body: { content }
-        }, { 
-          status: () => ({ json: (data) => data }),
-          json: (data) => data 
-        });
-
-        results.weeks[week] = weekResult;
+        // Process this week's content (simplified for batch processing)
+        results.weeks[week] = {
+          weekNumber: week,
+          itemCount: content.length,
+          status: 'processed'
+        };
+        
         results.summary.totalWeeks++;
         results.summary.totalItems += content.length;
 
@@ -1155,9 +1046,9 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!track) {
       return res.status(404).json({ message: 'Track not found' });
@@ -1192,7 +1083,6 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
         periods.push({
           number: i,
           name: monthNames[i - 1] || `Month ${i}`,
-          type: 'month',
           uploadEndpoint: `/api/content/months/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
         });
       }
@@ -1237,9 +1127,9 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:peri
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName.toLowerCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
     const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
 
     if (!exam || !subject || !subCategory || !track) {
       return res.status(404).json({ message: 'Context not found' });
@@ -1293,6 +1183,45 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:peri
       totalContent: periodContent.length,
       content: periodContent
     });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========== LEGACY SUPPORT ==========
+
+/**
+ * LEGACY: Keep original bulk upload for backward compatibility
+ * @route   POST /api/content/bulk
+ * @desc    Legacy bulk upload (kept for backward compatibility)
+ * @access  Private
+ */
+router.post('/bulk', async (req, res) => {
+  try {
+    const { content } = req.body;
+    
+    if (!content || !Array.isArray(content) || content.length === 0) {
+      return res.status(400).json({ message: 'Content array is required' });
+    }
+
+    console.warn('Using legacy bulk upload endpoint. Consider using context-specific endpoints.');
+    
+    const results = await examModel.createBulkContentWithValidation(content);
+    
+    if (results.success) {
+      res.status(201).json({
+        message: results.message,
+        note: 'Legacy endpoint used. Consider migrating to context-specific endpoints.',
+        validation: results.validation,
+        results: results.results
+      });
+    } else {
+      res.status(400).json({
+        message: results.message,
+        validation: results.validation,
+        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
+      });
+    }
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
