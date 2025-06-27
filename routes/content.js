@@ -6,182 +6,6 @@ const { ExamModel } = require('../models/exam');
 // Initialize the exam model
 const examModel = new ExamModel();
 
-// ========== CONTEXT-SPECIFIC CONTENT UPLOAD ROUTES ==========
-
-/**
- * IMPROVED: Upload content for specific exam-subject-track-subcategory context
- * @route   POST /api/content/upload/:examId/:subjectId/:trackId/:subCategoryId
- * @desc    Upload content to a specific context (no repetition needed)
- * @access  Private
- */
-router.post('/upload/:examId/:subjectId/:trackId/:subCategoryId', async (req, res) => {
-  try {
-    const { examId, subjectId, trackId, subCategoryId } = req.params;
-    const { content } = req.body;
-    
-    if (!content || !Array.isArray(content) || content.length === 0) {
-      return res.status(400).json({ message: 'Content array is required' });
-    }
-
-    // Validate the context first
-    const contextValidation = await examModel.validateCompleteContentStructure(
-      examId, subjectId, trackId, subCategoryId, null
-    );
-
-    if (!contextValidation.allValid) {
-      return res.status(400).json({
-        message: 'Invalid context for content upload',
-        validation: contextValidation
-      });
-    }
-
-    // Get context information for response
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
-    const [exam, subject, track, subCategory] = await Promise.all([
-      Exam.findById(examId),
-      Subject.findById(subjectId), 
-      Track.findById(trackId),
-      SubCategory.findById(subCategoryId)
-    ]);
-
-    // Add context to each content item automatically
-    const enrichedContent = content.map(item => ({
-      examName: exam.name,
-      subjectName: subject.name,
-      trackName: track.name,
-      subCategoryName: subCategory.name,
-      ...item
-    }));
-
-    // Use enhanced bulk creation with topic validation
-    const results = await examModel.createBulkContentWithValidation(enrichedContent);
-    
-    if (results.success) {
-      res.status(201).json({
-        message: `Successfully uploaded ${results.results.created.length} content items`,
-        context: {
-          exam: exam.displayName,
-          subject: subject.displayName,
-          track: track.displayName,
-          subCategory: subCategory.displayName
-        },
-        validation: results.validation,
-        results: results.results
-      });
-    } else {
-      res.status(400).json({
-        message: results.message,
-        context: {
-          exam: exam.displayName,
-          subject: subject.displayName,
-          track: track.displayName,
-          subCategory: subCategory.displayName
-        },
-        validation: results.validation,
-        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-/**
- * IMPROVED: Upload content using friendly names (auto-resolve IDs)
- * @route   POST /api/content/upload/:examName/:subjectName/:trackName/:subCategoryName
- * @desc    Upload content using readable names instead of IDs
- * @access  Private
- */
-router.post('/upload/:examName/:subjectName/:trackName/:subCategoryName', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName } = req.params;
-    const { content } = req.body;
-    
-    if (!content || !Array.isArray(content) || content.length === 0) {
-      return res.status(400).json({ message: 'Content array is required' });
-    }
-
-    // Resolve names to IDs
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
-    
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    if (!exam) {
-      return res.status(404).json({ message: `Exam "${examName}" not found` });
-    }
-
-    const subject = await Subject.findOne({ 
-      examId: exam._id, 
-      name: subjectName, 
-      isActive: true 
-    });
-    if (!subject) {
-      return res.status(404).json({ message: `Subject "${subjectName}" not found` });
-    }
-
-    const subCategory = await SubCategory.findOne({ 
-      examId: exam._id,
-      name: subCategoryName.toLowerCase(), 
-      isActive: true 
-    });
-    if (!subCategory) {
-      return res.status(404).json({ message: `SubCategory "${subCategoryName}" not found` });
-    }
-
-    const track = await Track.findOne({ 
-      examId: exam._id, 
-      subCategoryId: subCategory._id,
-      name: trackName, 
-      isActive: true 
-    });
-    if (!track) {
-      return res.status(404).json({ message: `Track "${trackName}" not found` });
-    }
-
-    // Add context to each content item automatically
-    const enrichedContent = content.map(item => ({
-      examName: exam.name,
-      subjectName: subject.name,
-      trackName: track.name,
-      subCategoryName: subCategory.name,
-      ...item
-    }));
-
-    // Use enhanced bulk creation with topic validation
-    const results = await examModel.createBulkContentWithValidation(enrichedContent);
-    
-    if (results.success) {
-      res.status(201).json({
-        message: `Successfully uploaded ${results.results.created.length} content items to ${exam.displayName} > ${subCategory.displayName} > ${subject.displayName} > ${track.displayName}`,
-        context: {
-          examId: exam._id,
-          subjectId: subject._id,
-          trackId: track._id,
-          subCategoryId: subCategory._id,
-          exam: exam.displayName,
-          subject: subject.displayName,
-          track: track.displayName,
-          subCategory: subCategory.displayName
-        },
-        validation: results.validation,
-        results: results.results
-      });
-    } else {
-      res.status(400).json({
-        message: results.message,
-        context: {
-          exam: exam.displayName,
-          subject: subject.displayName,
-          track: track.displayName,
-          subCategory: subCategory.displayName
-        },
-        validation: results.validation,
-        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
 
 /**
  * NEW: Pre-validate content for specific context
@@ -227,14 +51,7 @@ router.post('/validate/:examName/:subjectName/:trackName/:subCategoryName', asyn
   }
 });
 
-// ========== CONTENT GROUP MANAGEMENT ==========
-
-/**
- * NEW: Get content grouped for editing
- * @route   GET /api/content/groups/:examName/:subjectName/:trackName/:subCategoryName
- * @desc    Get content organized in editable groups
- * @access  Public
- */
+// FIND THIS ROUTE IN YOUR routes/content.js FILE:
 router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (req, res) => {
   try {
     const { examName, subjectName, trackName, subCategoryName } = req.params;
@@ -260,10 +77,11 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
       subCategoryId: subCategory._id
     });
 
+    // =================== REPLACE FROM HERE ===================
     let groupedContent = {};
 
     if (groupBy === 'topic') {
-      // Group by topics
+      // Group by topics (DEFAULT - works for all track types)
       content.forEach(item => {
         const topicKey = item.topicId?.name || 'uncategorized';
         const topicDisplay = item.topicId?.displayName || 'Uncategorized';
@@ -278,28 +96,96 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
         }
         groupedContent[topicKey].items.push(item);
       });
+
     } else if (groupBy === 'day' && track.trackType === 'days') {
       // Group by days for day-based tracks
       content.forEach(item => {
-        const dayMatch = item.name.match(/day(\d+)/i);
-        const dayNum = dayMatch ? parseInt(dayMatch[1]) : 0;
-        const dayKey = `day_${dayNum}`;
+        // Check metadata first, then fallback to name parsing
+        const day = item.metadata?.day || 
+                    (item.name.match(/day(\d+)/i) ? parseInt(item.name.match(/day(\d+)/i)[1]) : 0);
+        const dayKey = `day_${day}`;
         
         if (!groupedContent[dayKey]) {
           groupedContent[dayKey] = {
             groupKey: dayKey,
-            groupName: `Day ${dayNum}`,
+            groupName: `Day ${day}`,
             groupType: 'day',
             items: []
           };
         }
         groupedContent[dayKey].items.push(item);
       });
+
+    } else if (groupBy === 'week' && track.trackType === 'weeks') {
+      // Group by weeks for week-based tracks - MATCHES YOUR UPLOAD STRUCTURE
+      content.forEach(item => {
+        // Check metadata first (from your upload), then fallback to name parsing
+        const week = item.metadata?.week || 
+                     (item.name.match(/week(\d+)/i) ? parseInt(item.name.match(/week(\d+)/i)[1]) : 0);
+        const weekKey = `week_${week}`;
+        
+        if (!groupedContent[weekKey]) {
+          groupedContent[weekKey] = {
+            groupKey: weekKey,
+            groupName: `Week ${week}`,
+            groupType: 'week',
+            items: []
+          };
+        }
+        groupedContent[weekKey].items.push(item);
+      });
+
+    } else if (groupBy === 'month' && track.trackType === 'months') {
+      // Group by months for month-based tracks
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+      
+      content.forEach(item => {
+        // Check metadata first, then fallback to name parsing
+        const month = item.metadata?.month || 
+                      (item.name.match(/month(\d+)/i) ? parseInt(item.name.match(/month(\d+)/i)[1]) : 0);
+        const monthKey = `month_${month}`;
+        const monthName = monthNames[month - 1] || `Month ${month}`;
+        
+        if (!groupedContent[monthKey]) {
+          groupedContent[monthKey] = {
+            groupKey: monthKey,
+            groupName: monthName,
+            groupType: 'month',
+            items: []
+          };
+        }
+        groupedContent[monthKey].items.push(item);
+      });
+
+    } else if (groupBy === 'semester' && track.trackType === 'semester') {
+      // Group by semesters for semester-based tracks
+      const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+      
+      content.forEach(item => {
+        // Check metadata first, then fallback to name parsing
+        const semester = item.metadata?.semester || 
+                         (item.name.match(/semester(\d+)/i) ? parseInt(item.name.match(/semester(\d+)/i)[1]) : 0);
+        const semesterKey = `semester_${semester}`;
+        const semesterName = semesterNames[semester - 1] || `Semester ${semester}`;
+        
+        if (!groupedContent[semesterKey]) {
+          groupedContent[semesterKey] = {
+            groupKey: semesterKey,
+            groupName: semesterName,
+            groupType: 'semester',
+            items: []
+          };
+        }
+        groupedContent[semesterKey].items.push(item);
+      });
+
     } else if (groupBy === 'year' && track.trackType === 'years') {
       // Group by years for year-based tracks
       content.forEach(item => {
-        const yearMatch = item.name.match(/(\d{4})/);
-        const year = yearMatch ? yearMatch[1] : 'unknown';
+        // Check metadata first, then fallback to name parsing
+        const year = item.metadata?.year || 
+                     item.name.match(/(\d{4})/)?.[1] || 'unknown';
         
         if (!groupedContent[year]) {
           groupedContent[year] = {
@@ -311,21 +197,51 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
         }
         groupedContent[year].items.push(item);
       });
+
+    } else {
+      // Default fallback - group by topic if invalid groupBy or track type mismatch
+      content.forEach(item => {
+        const topicKey = item.topicId?.name || 'uncategorized';
+        const topicDisplay = item.topicId?.displayName || 'Uncategorized';
+        
+        if (!groupedContent[topicKey]) {
+          groupedContent[topicKey] = {
+            groupKey: topicKey,
+            groupName: topicDisplay,
+            groupType: 'topic',
+            items: []
+          };
+        }
+        groupedContent[topicKey].items.push(item);
+      });
     }
 
     // Convert to array and sort
     const groups = Object.values(groupedContent).sort((a, b) => {
       if (groupBy === 'topic') {
-        return a.items[0]?.topicId?.orderIndex - b.items[0]?.topicId?.orderIndex;
+        return (a.items[0]?.topicId?.orderIndex || 0) - (b.items[0]?.topicId?.orderIndex || 0);
       } else if (groupBy === 'day') {
-        const aDay = parseInt(a.groupKey.split('_')[1]);
-        const bDay = parseInt(b.groupKey.split('_')[1]);
+        const aDay = parseInt(a.groupKey.split('_')[1]) || 0;
+        const bDay = parseInt(b.groupKey.split('_')[1]) || 0;
         return aDay - bDay;
+      } else if (groupBy === 'week') {
+        const aWeek = parseInt(a.groupKey.split('_')[1]) || 0;
+        const bWeek = parseInt(b.groupKey.split('_')[1]) || 0;
+        return aWeek - bWeek;
+      } else if (groupBy === 'month') {
+        const aMonth = parseInt(a.groupKey.split('_')[1]) || 0;
+        const bMonth = parseInt(b.groupKey.split('_')[1]) || 0;
+        return aMonth - bMonth;
+      } else if (groupBy === 'semester') {
+        const aSemester = parseInt(a.groupKey.split('_')[1]) || 0;
+        const bSemester = parseInt(b.groupKey.split('_')[1]) || 0;
+        return aSemester - bSemester;
       } else if (groupBy === 'year') {
         return parseInt(b.groupKey) - parseInt(a.groupKey); // Newest first
       }
       return 0;
     });
+    // =================== REPLACE TO HERE ===================
 
     res.json({
       context: {
@@ -1188,43 +1104,6 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:peri
   }
 });
 
-// ========== LEGACY SUPPORT ==========
 
-/**
- * LEGACY: Keep original bulk upload for backward compatibility
- * @route   POST /api/content/bulk
- * @desc    Legacy bulk upload (kept for backward compatibility)
- * @access  Private
- */
-router.post('/bulk', async (req, res) => {
-  try {
-    const { content } = req.body;
-    
-    if (!content || !Array.isArray(content) || content.length === 0) {
-      return res.status(400).json({ message: 'Content array is required' });
-    }
-
-    console.warn('Using legacy bulk upload endpoint. Consider using context-specific endpoints.');
-    
-    const results = await examModel.createBulkContentWithValidation(content);
-    
-    if (results.success) {
-      res.status(201).json({
-        message: results.message,
-        note: 'Legacy endpoint used. Consider migrating to context-specific endpoints.',
-        validation: results.validation,
-        results: results.results
-      });
-    } else {
-      res.status(400).json({
-        message: results.message,
-        validation: results.validation,
-        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
 
 module.exports = router;
