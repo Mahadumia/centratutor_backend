@@ -611,121 +611,11 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
   }
 });
 
-// ========== MONTH-BASED TRACK CONTENT UPLOAD ==========
-
-/**
- * NEW: Upload content to a specific month in a monthly track
- * @route   POST /api/content/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNumber
- * @desc    Upload content for a specific month (Month 1, Month 2, etc.)
- * @access  Private
- */
-router.post('/months/:examName/:subjectName/:trackName/:subCategoryName/:monthNumber', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName, monthNumber } = req.params;
-    const { content } = req.body;
-    
-    if (!content || !Array.isArray(content) || content.length === 0) {
-      return res.status(400).json({ message: 'Content array is required' });
-    }
-
-    // Validate month number
-    const month = parseInt(monthNumber);
-    if (isNaN(month) || month < 1) {
-      return res.status(400).json({ message: 'Valid month number (1 or greater) is required' });
-    }
-
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
-    
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
-      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
-    }
-
-    // Validate track type
-    if (track.trackType !== 'months') {
-      return res.status(400).json({ 
-        message: `Track "${trackName}" is not a monthly track (type: ${track.trackType})` 
-      });
-    }
-
-    // Check if month number is within track duration
-    if (track.duration && month > track.duration) {
-      return res.status(400).json({ 
-        message: `Month ${month} exceeds track duration of ${track.duration} months` 
-      });
-    }
-
-    // Add month-specific naming to each content item
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                       'July', 'August', 'September', 'October', 'November', 'December'];
-    const monthName = monthNames[month - 1] || `Month ${month}`;
-
-    const enrichedContent = content.map((item, index) => ({
-      examName: exam.name,
-      subjectName: subject.name,
-      trackName: track.name,
-      subCategoryName: subCategory.name,
-      name: `month${month}_${item.name}`,
-      displayName: `${monthName} - ${item.displayName || item.name}`,
-      description: item.description ? `${monthName}: ${item.description}` : `${monthName} content`,
-      orderIndex: month * 10000 + (item.orderIndex || index), // Month-based ordering
-      metadata: {
-        ...item.metadata,
-        month: month,
-        monthName: monthName,
-        timeBasedContent: true
-      },
-      ...item
-    }));
-
-    // Upload using enhanced validation
-    const results = await examModel.createBulkContentWithValidation(enrichedContent);
-    
-    if (results.success) {
-      res.status(201).json({
-        message: `Successfully uploaded ${results.results.created.length} content items to ${monthName}`,
-        context: {
-          exam: exam.displayName,
-          subject: subject.displayName,
-          track: track.displayName,
-          subCategory: subCategory.displayName,
-          month: month,
-          monthName: monthName
-        },
-        validation: results.validation,
-        results: results.results
-      });
-    } else {
-      res.status(400).json({
-        message: results.message,
-        context: {
-          exam: exam.displayName,
-          subject: subject.displayName,
-          track: track.displayName,
-          subCategory: subCategory.displayName,
-          month: month,
-          monthName: monthName
-        },
-        validation: results.validation,
-        results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
 // ========== SEMESTER-BASED TRACK CONTENT UPLOAD ==========
-
 /**
- * NEW: Upload content to a specific semester in a semester track
+ * UPDATED: Upload content to a specific semester in a semester track
  * @route   POST /api/content/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber
- * @desc    Upload content for a specific semester (Semester 1, Semester 2, etc.)
+ * @desc    Upload content for a specific semester (preserves original semesterNumber format)
  * @access  Private
  */
 router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber', async (req, res) => {
@@ -737,11 +627,9 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
       return res.status(400).json({ message: 'Content array is required' });
     }
 
-    // Validate semester number
-    const semester = parseInt(semesterNumber);
-    if (isNaN(semester) || semester < 1) {
-      return res.status(400).json({ message: 'Valid semester number (1 or greater) is required' });
-    }
+    // UPDATED: Preserve original semesterNumber format (001, 1, "2nd", etc.)
+    const originalSemesterNumber = semesterNumber; // Keep as string to preserve format
+    const numericSemester = parseInt(semesterNumber) || 1; // For validation and ordering
 
     // Resolve context
     const { Exam, Subject, Track, SubCategory } = require('../models/exam');
@@ -762,30 +650,30 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
       });
     }
 
-    // Check if semester number is within track duration
-    if (track.duration && semester > track.duration) {
+    // Check if semester number is within track duration (using numeric value)
+    if (track.duration && numericSemester > track.duration) {
       return res.status(400).json({ 
-        message: `Semester ${semester} exceeds track duration of ${track.duration} semesters` 
+        message: `Semester ${originalSemesterNumber} exceeds track duration of ${track.duration} semesters` 
       });
     }
 
-    // Add semester-specific naming to each content item
-    const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
-    const semesterName = semesterNames[semester - 1] || `Semester ${semester}`;
+    // UPDATED: Use original semester format instead of hardcoded names
+    const semesterDisplayName = originalSemesterNumber; // Use exactly what was passed in URL
 
     const enrichedContent = content.map((item, index) => ({
       examName: exam.name,
       subjectName: subject.name,
       trackName: track.name,
       subCategoryName: subCategory.name,
-      name: `semester${semester}_${item.name}`,
-      displayName: `${semesterName} - ${item.displayName || item.name}`,
-      description: item.description ? `${semesterName}: ${item.description}` : `${semesterName} content`,
-      orderIndex: semester * 100000 + (item.orderIndex || index), // Semester-based ordering
+      name: `semester${numericSemester}_${item.name}`,
+      displayName: `${semesterDisplayName} - ${item.displayName || item.name}`,
+      description: item.description ? `${semesterDisplayName}: ${item.description}` : `${semesterDisplayName} content`,
+      orderIndex: numericSemester * 100000 + (item.orderIndex || index), // Semester-based ordering
       metadata: {
         ...item.metadata,
-        semester: semester,
-        semesterName: semesterName,
+        semester: numericSemester, // Numeric for backend grouping logic
+        semesterName: semesterDisplayName, // Original format for display
+        originalSemesterNumber: originalSemesterNumber, // Preserve exact input
         timeBasedContent: true
       },
       ...item
@@ -796,14 +684,15 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
     
     if (results.success) {
       res.status(201).json({
-        message: `Successfully uploaded ${results.results.created.length} content items to ${semesterName}`,
+        message: `Successfully uploaded ${results.results.created.length} content items to ${semesterDisplayName}`,
         context: {
           exam: exam.displayName,
           subject: subject.displayName,
           track: track.displayName,
           subCategory: subCategory.displayName,
-          semester: semester,
-          semesterName: semesterName
+          semester: numericSemester,
+          semesterName: semesterDisplayName,
+          originalSemesterNumber: originalSemesterNumber
         },
         validation: results.validation,
         results: results.results
@@ -816,8 +705,9 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
           subject: subject.displayName,
           track: track.displayName,
           subCategory: subCategory.displayName,
-          semester: semester,
-          semesterName: semesterName
+          semester: numericSemester,
+          semesterName: semesterDisplayName,
+          originalSemesterNumber: originalSemesterNumber
         },
         validation: results.validation,
         results: results.results || { created: [], errors: results.errors || [], duplicates: [] }
@@ -828,123 +718,7 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
   }
 });
 
-// ========== BATCH UPLOAD FOR MULTIPLE TIME PERIODS ==========
 
-/**
- * NEW: Batch upload content to multiple weeks at once
- * @route   POST /api/content/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch
- * @desc    Upload content for multiple weeks in one request
- * @access  Private
- */
-router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/batch', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName } = req.params;
-    const { weeklyContent } = req.body;
-    
-    if (!weeklyContent || typeof weeklyContent !== 'object') {
-      return res.status(400).json({ 
-        message: 'weeklyContent object is required (format: { "1": [...], "2": [...] })' 
-      });
-    }
-
-    const results = { weeks: {}, summary: { totalWeeks: 0, totalItems: 0, errors: [] } };
-
-    // Process each week
-    for (const [weekNum, content] of Object.entries(weeklyContent)) {
-      try {
-        const week = parseInt(weekNum);
-        if (isNaN(week) || week < 1) {
-          results.summary.errors.push(`Invalid week number: ${weekNum}`);
-          continue;
-        }
-
-        if (!Array.isArray(content) || content.length === 0) {
-          results.summary.errors.push(`Week ${week}: Content array is empty or invalid`);
-          continue;
-        }
-
-        // Process this week's content (simplified for batch processing)
-        results.weeks[week] = {
-          weekNumber: week,
-          itemCount: content.length,
-          status: 'processed'
-        };
-        
-        results.summary.totalWeeks++;
-        results.summary.totalItems += content.length;
-
-      } catch (error) {
-        results.summary.errors.push(`Week ${weekNum}: ${error.message}`);
-      }
-    }
-
-    res.status(201).json({
-      message: `Batch upload completed for ${results.summary.totalWeeks} weeks`,
-      context: { examName, subjectName, trackName, subCategoryName },
-      results
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-/**
- * NEW: Batch upload content to multiple days at once
- * @route   POST /api/content/days/:examName/:subjectName/:trackName/:subCategoryName/batch
- * @desc    Upload content for multiple days in one request
- * @access  Private
- */
-router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/batch', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName } = req.params;
-    const { dailyContent } = req.body;
-    
-    if (!dailyContent || typeof dailyContent !== 'object') {
-      return res.status(400).json({ 
-        message: 'dailyContent object is required (format: { "1": [...], "2": [...] })' 
-      });
-    }
-
-    const results = { days: {}, summary: { totalDays: 0, totalItems: 0, errors: [] } };
-
-    // Process each day
-    for (const [dayNum, content] of Object.entries(dailyContent)) {
-      try {
-        const day = parseInt(dayNum);
-        if (isNaN(day) || day < 1) {
-          results.summary.errors.push(`Invalid day number: ${dayNum}`);
-          continue;
-        }
-
-        if (!Array.isArray(content) || content.length === 0) {
-          results.summary.errors.push(`Day ${day}: Content array is empty or invalid`);
-          continue;
-        }
-
-        // Process this day's content (simplified for batch processing)
-        results.days[day] = {
-          dayNumber: day,
-          itemCount: content.length,
-          status: 'processed'
-        };
-        
-        results.summary.totalDays++;
-        results.summary.totalItems += content.length;
-
-      } catch (error) {
-        results.summary.errors.push(`Day ${dayNum}: ${error.message}`);
-      }
-    }
-
-    res.status(201).json({
-      message: `Batch upload completed for ${results.summary.totalDays} days`,
-      context: { examName, subjectName, trackName, subCategoryName },
-      results
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
 
 // ========== UTILITY ENDPOINTS ==========
 
