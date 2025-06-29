@@ -77,7 +77,6 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
       subCategoryId: subCategory._id
     });
 
-    // =================== REPLACE FROM HERE ===================
     let groupedContent = {};
 
     if (groupBy === 'topic') {
@@ -159,20 +158,23 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
       });
 
     } else if (groupBy === 'semester' && track.trackType === 'semester') {
-      // Group by semesters for semester-based tracks
-      const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
+      // 🔧 FIXED: Group by semesters using EXACT semesterName from upload metadata
       
       content.forEach(item => {
         // Check metadata first, then fallback to name parsing
         const semester = item.metadata?.semester || 
                          (item.name.match(/semester(\d+)/i) ? parseInt(item.name.match(/semester(\d+)/i)[1]) : 0);
         const semesterKey = `semester_${semester}`;
-        const semesterName = semesterNames[semester - 1] || `Semester ${semester}`;
+        
+        // 🎯 CRITICAL FIX: Use exact semesterName from metadata instead of hardcoded names
+        const semesterName = item.metadata?.semesterName || 
+                            item.metadata?.originalSemesterNumber || 
+                            `Semester ${semester}`;
         
         if (!groupedContent[semesterKey]) {
           groupedContent[semesterKey] = {
             groupKey: semesterKey,
-            groupName: semesterName,
+            groupName: semesterName, // Now uses "001", "7", "first semester", etc.
             groupType: 'semester',
             items: []
           };
@@ -241,7 +243,6 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
       }
       return 0;
     });
-    // =================== REPLACE TO HERE ===================
 
     res.json({
       context: {
