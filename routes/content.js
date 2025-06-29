@@ -158,40 +158,37 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
       });
 
     } else if (groupBy === 'semester' && track.trackType === 'semester') {
-      // 🔧 FIXED: Group by semesters using EXACT semesterName from upload metadata
+      // 🔧 FIXED: Group by exact semesterName to create separate groups for learning app
       console.log('🎓 [SEMESTER DEBUG] Starting semester grouping...');
       console.log('📊 [CONTENT COUNT]', content.length, 'items found');
       
       content.forEach((item, index) => {
-        // Check metadata first, then fallback to name parsing
-        const semester = item.metadata?.semester || 
-                         (item.name.match(/semester(\d+)/i) ? parseInt(item.name.match(/semester(\d+)/i)[1]) : 1);
-        const semesterKey = `semester_${semester}`;
-        
-        // 🎯 CRITICAL FIX: Use exact semesterName from metadata instead of hardcoded names
+        // 🎯 Use semesterName as the key, not numeric semester for separate groups
         const semesterName = item.metadata?.semesterName || 
                             item.metadata?.originalSemesterNumber || 
-                            `Semester ${semester}`;
+                            `Semester ${item.metadata?.semester || 1}`;
+        
+        // Create unique key based on actual semester name for separate groups
+        const semesterKey = semesterName.toLowerCase().replace(/\s+/g, '_');
         
         console.log(`🔍 [ITEM ${index + 1}] Processing:`, {
           name: item.name,
-          semester: semester,
-          semesterKey: semesterKey,
           semesterName: semesterName,
+          semesterKey: semesterKey,
           fullMetadata: item.metadata
         });
         
-        // 🚨 FIX: Always use the FIRST semesterName found for each semester number
         if (!groupedContent[semesterKey]) {
           groupedContent[semesterKey] = {
             groupKey: semesterKey,
-            groupName: semesterName, // Use semesterName from first item in this semester
+            groupName: semesterName, // Exact name: "001", "first semester", "john up"
             groupType: 'semester',
-            items: []
+            items: [],
+            sortOrder: item.metadata?.semester || 1 // For sorting purposes
           };
-          console.log(`✅ [NEW GROUP] Created group "${semesterName}" (${semesterKey})`);
+          console.log(`✅ [NEW GROUP] Created separate group "${semesterName}" (${semesterKey})`);
         } else {
-          console.log(`📁 [EXISTING GROUP] Adding to existing group "${groupedContent[semesterKey].groupName}" (${semesterKey})`);
+          console.log(`📁 [EXISTING GROUP] Adding to group "${groupedContent[semesterKey].groupName}" (${semesterKey})`);
         }
         
         groupedContent[semesterKey].items.push(item);
@@ -256,9 +253,14 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
         const bMonth = parseInt(b.groupKey.split('_')[1]) || 0;
         return aMonth - bMonth;
       } else if (groupBy === 'semester') {
-        const aSemester = parseInt(a.groupKey.split('_')[1]) || 0;
-        const bSemester = parseInt(b.groupKey.split('_')[1]) || 0;
-        return aSemester - bSemester;
+        // Sort by sortOrder (numeric semester) but keep separate groups
+        const aSemester = a.sortOrder || 0;
+        const bSemester = b.sortOrder || 0;
+        if (aSemester !== bSemester) {
+          return aSemester - bSemester;
+        }
+        // If same numeric semester, sort alphabetically by name
+        return a.groupName.localeCompare(b.groupName);
       } else if (groupBy === 'year') {
         return parseInt(b.groupKey) - parseInt(a.groupKey); // Newest first
       }
@@ -281,7 +283,6 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
-
 /**
  * NEW: Update content group
  * @route   PUT /api/content/groups/:examName/:subjectName/:trackName/:subCategoryName/:groupKey
