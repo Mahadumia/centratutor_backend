@@ -159,11 +159,13 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
 
     } else if (groupBy === 'semester' && track.trackType === 'semester') {
       // 🔧 FIXED: Group by semesters using EXACT semesterName from upload metadata
+      console.log('🎓 [SEMESTER DEBUG] Starting semester grouping...');
+      console.log('📊 [CONTENT COUNT]', content.length, 'items found');
       
-      content.forEach(item => {
+      content.forEach((item, index) => {
         // Check metadata first, then fallback to name parsing
         const semester = item.metadata?.semester || 
-                         (item.name.match(/semester(\d+)/i) ? parseInt(item.name.match(/semester(\d+)/i)[1]) : 0);
+                         (item.name.match(/semester(\d+)/i) ? parseInt(item.name.match(/semester(\d+)/i)[1]) : 1);
         const semesterKey = `semester_${semester}`;
         
         // 🎯 CRITICAL FIX: Use exact semesterName from metadata instead of hardcoded names
@@ -171,16 +173,35 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
                             item.metadata?.originalSemesterNumber || 
                             `Semester ${semester}`;
         
+        console.log(`🔍 [ITEM ${index + 1}] Processing:`, {
+          name: item.name,
+          semester: semester,
+          semesterKey: semesterKey,
+          semesterName: semesterName,
+          fullMetadata: item.metadata
+        });
+        
+        // 🚨 FIX: Always use the FIRST semesterName found for each semester number
         if (!groupedContent[semesterKey]) {
           groupedContent[semesterKey] = {
             groupKey: semesterKey,
-            groupName: semesterName, // Now uses "001", "7", "first semester", etc.
+            groupName: semesterName, // Use semesterName from first item in this semester
             groupType: 'semester',
             items: []
           };
+          console.log(`✅ [NEW GROUP] Created group "${semesterName}" (${semesterKey})`);
+        } else {
+          console.log(`📁 [EXISTING GROUP] Adding to existing group "${groupedContent[semesterKey].groupName}" (${semesterKey})`);
         }
+        
         groupedContent[semesterKey].items.push(item);
       });
+      
+      console.log('🎓 [SEMESTER DEBUG] Final groups:', Object.keys(groupedContent).map(key => ({
+        key,
+        name: groupedContent[key].groupName,
+        itemCount: groupedContent[key].items.length
+      })));
 
     } else if (groupBy === 'year' && track.trackType === 'years') {
       // Group by years for year-based tracks
