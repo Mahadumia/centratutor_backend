@@ -1,4 +1,4 @@
-// models/exam.js - Enhanced with Track-Specific Topic Filtering
+// models/exam.js - UPDATED: Cleaned unused methods + Added missing methods
 const mongoose = require('mongoose');
 
 // Exam Schema - Main exam categories like JUPEB, WAEC, etc.
@@ -398,10 +398,10 @@ const Content = mongoose.model('Content', contentSchema);
 const Question = mongoose.model('Question', questionSchema);
 
 class ExamModel {
-  // ========== NEW: TRACK-SPECIFIC TOPIC METHODS ==========
+  // ========== TRACK-SPECIFIC TOPIC METHODS ==========
   
   /**
-   * NEW: Get topics that have actual content for a specific track
+   * Get topics that have actual content for a specific track
    * This is what should be used in step 8 of the user flow
    */
   async getTopicsWithContentForTrack(examId, subjectId, trackId, subCategoryId) {
@@ -451,9 +451,57 @@ class ExamModel {
     }
   }
 
- 
   /**
-   * NEW: Get content grouped by track-specific topics
+   * NEW: Get topics that have questions for a specific track
+   */
+  async getTopicsWithQuestionsForTrack(examId, subjectId, trackId) {
+    try {
+      // Get all questions for the specific track
+      const questions = await Question.find({
+        examId,
+        subjectId,
+        trackId,
+        isActive: true
+      }).populate('topicId');
+
+      // Extract unique topics from the questions
+      const topicsWithQuestions = [];
+      const topicIds = new Set();
+
+      questions.forEach(questionItem => {
+        if (questionItem.topicId && !topicIds.has(questionItem.topicId._id.toString())) {
+          topicIds.add(questionItem.topicId._id.toString());
+          topicsWithQuestions.push({
+            ...questionItem.topicId.toObject(),
+            questionCount: 0 // Will be calculated below
+          });
+        }
+      });
+
+      // Count questions per topic
+      topicsWithQuestions.forEach(topic => {
+        topic.questionCount = questions.filter(q => 
+          q.topicId._id.toString() === topic._id.toString()
+        ).length;
+      });
+
+      // Sort by orderIndex and name
+      topicsWithQuestions.sort((a, b) => {
+        if (a.orderIndex !== b.orderIndex) {
+          return (a.orderIndex || 0) - (b.orderIndex || 0);
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      return topicsWithQuestions;
+    } catch (error) {
+      console.error('Error getting topics with questions for track:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get content grouped by track-specific topics
    */
   async getContentGroupedByTrackTopics(examId, subjectId, trackId, subCategoryId) {
     try {
@@ -496,485 +544,10 @@ class ExamModel {
     }
   }
 
-  /**
-   * NEW: Get questions grouped by track-specific topics
-   */
-  async getQuestionsGroupedByTrackTopics(examId, subjectId, trackId) {
-    try {
-      // Get topics that have questions for this track
-      const topicsWithQuestions = await this.getTopicsWithQuestionsForTrack(
-        examId, subjectId, trackId
-      );
-
-      // Get all questions for the track
-      const allQuestions = await Question.find({
-        examId,
-        subjectId,
-        trackId,
-        isActive: true
-      }).populate(['examId', 'subjectId', 'trackId', 'topicId'])
-        .sort({ orderIndex: 1, _id: 1 });
-
-      // Group questions by topics (only topics that have questions)
-      const questionsByTopics = {};
-
-      topicsWithQuestions.forEach(topic => {
-        questionsByTopics[topic._id.toString()] = {
-          topic: topic,
-          questions: allQuestions.filter(question => 
-            question.topicId._id.toString() === topic._id.toString()
-          )
-        };
-      });
-
-      return {
-        topicsWithQuestions: topicsWithQuestions,
-        questionsByTopics: Object.values(questionsByTopics),
-        totalTopics: topicsWithQuestions.length,
-        totalQuestions: allQuestions.length
-      };
-    } catch (error) {
-      console.error('Error getting questions grouped by track topics:', error);
-      throw error;
-    }
-  }
-
-// Add these methods to your ExamModel class in models/exam.js
-
-// ========== TIME-BASED CONTENT METHODS ==========
-
-/**
- * NEW: Get content grouped by time periods (weeks, days, months, semesters)
- */
-async getContentByTimePeriods(examId, subjectId, trackId, subCategoryId) {
-  try {
-    // Get the track to determine type
-    const track = await Track.findById(trackId);
-    if (!track) {
-      throw new Error('Track not found');
-    }
-
-    // Get all content for this track
-    const allContent = await Content.find({
-      examId,
-      subjectId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    }).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId'])
-      .sort({ orderIndex: 1, name: 1 });
-
-    // Group content by time periods based on track type
-    const timeGroups = {};
-    const trackType = track.trackType;
-
-    allContent.forEach(content => {
-      let timeKey = 'ungrouped';
-      let timeName = 'Ungrouped';
-
-      if (content.metadata && content.metadata.timeBasedContent) {
-        // Use metadata time information
-        if (trackType === 'weeks' && content.metadata.week) {
-          timeKey = `week_${content.metadata.week}`;
-          timeName = `Week ${content.metadata.week}`;
-        } else if (trackType === 'days' && content.metadata.day) {
-          timeKey = `day_${content.metadata.day}`;
-          timeName = `Day ${content.metadata.day}`;
-        } else if (trackType === 'months' && content.metadata.month) {
-          timeKey = `month_${content.metadata.month}`;
-          timeName = content.metadata.monthName || `Month ${content.metadata.month}`;
-        } else if (trackType === 'semester' && content.metadata.semester) {
-          timeKey = `semester_${content.metadata.semester}`;
-          timeName = content.metadata.semesterName || `Semester ${content.metadata.semester}`;
-        }
-      } else {
-        // Fallback: try to extract from name
-        if (trackType === 'weeks') {
-          const weekMatch = content.name.match(/week(\d+)/i);
-          if (weekMatch) {
-            const weekNum = parseInt(weekMatch[1]);
-            timeKey = `week_${weekNum}`;
-            timeName = `Week ${weekNum}`;
-          }
-        } else if (trackType === 'days') {
-          const dayMatch = content.name.match(/day(\d+)/i);
-          if (dayMatch) {
-            const dayNum = parseInt(dayMatch[1]);
-            timeKey = `day_${dayNum}`;
-            timeName = `Day ${dayNum}`;
-          }
-        } else if (trackType === 'months') {
-          const monthMatch = content.name.match(/month(\d+)/i);
-          if (monthMatch) {
-            const monthNum = parseInt(monthMatch[1]);
-            timeKey = `month_${monthNum}`;
-            timeName = `Month ${monthNum}`;
-          }
-        } else if (trackType === 'semester') {
-          const semesterMatch = content.name.match(/semester(\d+)/i);
-          if (semesterMatch) {
-            const semesterNum = parseInt(semesterMatch[1]);
-            timeKey = `semester_${semesterNum}`;
-            timeName = `Semester ${semesterNum}`;
-          }
-        }
-      }
-
-      if (!timeGroups[timeKey]) {
-        timeGroups[timeKey] = {
-          timeKey,
-          timeName,
-          timeType: trackType,
-          timeNumber: timeKey === 'ungrouped' ? 0 : parseInt(timeKey.split('_')[1]),
-          content: []
-        };
-      }
-
-      timeGroups[timeKey].content.push(content);
-    });
-
-    // Convert to array and sort by time number
-    const sortedTimeGroups = Object.values(timeGroups).sort((a, b) => {
-      if (a.timeNumber === 0) return 1; // Put ungrouped at end
-      if (b.timeNumber === 0) return -1;
-      return a.timeNumber - b.timeNumber;
-    });
-
-    return {
-      track: {
-        id: track._id,
-        name: track.displayName,
-        type: trackType,
-        duration: track.duration
-      },
-      totalContent: allContent.length,
-      totalTimePeriods: sortedTimeGroups.length,
-      contentByTimePeriods: sortedTimeGroups
-    };
-  } catch (error) {
-    console.error('Error getting content by time periods:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Get content for a specific time period
- */
-async getContentForTimePeriod(examId, subjectId, trackId, subCategoryId, timeType, timeNumber) {
-  try {
-    const track = await Track.findById(trackId);
-    if (!track) {
-      throw new Error('Track not found');
-    }
-
-    if (track.trackType !== timeType) {
-      throw new Error(`Track type mismatch. Expected ${timeType}, got ${track.trackType}`);
-    }
-
-    // Get all content for this track
-    const allContent = await Content.find({
-      examId,
-      subjectId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    }).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId'])
-      .sort({ orderIndex: 1, name: 1 });
-
-    // Filter content for the specific time period
-    const timeContent = allContent.filter(content => {
-      // Check metadata first
-      if (content.metadata && content.metadata.timeBasedContent) {
-        const timeKey = timeType === 'weeks' ? 'week' :
-                       timeType === 'days' ? 'day' :
-                       timeType === 'months' ? 'month' :
-                       timeType === 'semester' ? 'semester' : null;
-        
-        if (timeKey && content.metadata[timeKey] === timeNumber) {
-          return true;
-        }
-      }
-
-      // Fallback: check name pattern
-      const timePattern = new RegExp(`${timeType.slice(0, -1)}${timeNumber}`, 'i');
-      return timePattern.test(content.name);
-    });
-
-    // Get time period name
-    let timeName = `${timeType.charAt(0).toUpperCase() + timeType.slice(1, -1)} ${timeNumber}`;
-    if (timeType === 'months') {
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                         'July', 'August', 'September', 'October', 'November', 'December'];
-      timeName = monthNames[timeNumber - 1] || timeName;
-    } else if (timeType === 'semester') {
-      const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
-      timeName = semesterNames[timeNumber - 1] || timeName;
-    }
-
-    // Group by topics if there are multiple topics
-    const contentByTopics = {};
-    timeContent.forEach(content => {
-      const topicKey = content.topicId ? content.topicId._id.toString() : 'no_topic';
-      const topicName = content.topicId ? content.topicId.displayName : 'No Topic';
-      
-      if (!contentByTopics[topicKey]) {
-        contentByTopics[topicKey] = {
-          topic: content.topicId ? content.topicId : null,
-          topicName,
-          content: []
-        };
-      }
-      contentByTopics[topicKey].content.push(content);
-    });
-
-    return {
-      timePeriod: {
-        type: timeType,
-        number: timeNumber,
-        name: timeName
-      },
-      track: {
-        id: track._id,
-        name: track.displayName,
-        type: track.trackType,
-        duration: track.duration
-      },
-      totalContent: timeContent.length,
-      totalTopics: Object.keys(contentByTopics).length,
-      content: timeContent,
-      contentByTopics: Object.values(contentByTopics)
-    };
-  } catch (error) {
-    console.error('Error getting content for time period:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Generate time period structure for a track
- */
-async getTrackTimePeriods(examId, subCategoryId, trackId) {
-  try {
-    const track = await Track.findById(trackId);
-    if (!track) {
-      throw new Error('Track not found');
-    }
-
-    const periods = [];
-    const trackType = track.trackType;
-    const duration = track.duration || 0;
-
-    // Get content count for each period
-    const allContent = await Content.find({
-      examId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    });
-
-    for (let i = 1; i <= duration; i++) {
-      let periodName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1, -1)} ${i}`;
-      
-      if (trackType === 'months') {
-        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                           'July', 'August', 'September', 'October', 'November', 'December'];
-        periodName = monthNames[i - 1] || periodName;
-      } else if (trackType === 'semester') {
-        const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
-        periodName = semesterNames[i - 1] || periodName;
-      }
-
-      // Count content for this period
-      const periodContent = allContent.filter(content => {
-        // Check metadata
-        if (content.metadata && content.metadata.timeBasedContent) {
-          const timeKey = trackType === 'weeks' ? 'week' :
-                         trackType === 'days' ? 'day' :
-                         trackType === 'months' ? 'month' :
-                         trackType === 'semester' ? 'semester' : null;
-          
-          if (timeKey && content.metadata[timeKey] === i) {
-            return true;
-          }
-        }
-
-        // Check name pattern
-        const timePattern = new RegExp(`${trackType.slice(0, -1)}${i}`, 'i');
-        return timePattern.test(content.name);
-      });
-
-      periods.push({
-        number: i,
-        name: periodName,
-        type: trackType.slice(0, -1), // Remove 's' from end
-        contentCount: periodContent.length,
-        hasContent: periodContent.length > 0
-      });
-    }
-
-    return {
-      track: {
-        id: track._id,
-        name: track.displayName,
-        type: trackType,
-        duration: duration
-      },
-      totalPeriods: periods.length,
-      periods
-    };
-  } catch (error) {
-    console.error('Error getting track time periods:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Get track progress/completion status
- */
-async getTrackProgress(examId, subjectId, trackId, subCategoryId) {
-  try {
-    const track = await Track.findById(trackId);
-    if (!track) {
-      throw new Error('Track not found');
-    }
-
-    const periods = await this.getTrackTimePeriods(examId, subCategoryId, trackId);
-    
-    const totalPeriods = periods.totalPeriods;
-    const periodsWithContent = periods.periods.filter(p => p.hasContent).length;
-    const emptyPeriods = totalPeriods - periodsWithContent;
-    
-    const progressPercentage = totalPeriods > 0 ? 
-      Math.round((periodsWithContent / totalPeriods) * 100) : 0;
-
-    // Get total content count
-    const totalContent = await Content.countDocuments({
-      examId,
-      subjectId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    });
-
-    return {
-      track: periods.track,
-      progress: {
-        totalPeriods,
-        periodsWithContent,
-        emptyPeriods,
-        progressPercentage,
-        totalContent,
-        status: progressPercentage === 100 ? 'complete' : 
-                progressPercentage > 0 ? 'in_progress' : 'empty'
-      },
-      periods: periods.periods
-    };
-  } catch (error) {
-    console.error('Error getting track progress:', error);
-    throw error;
-  }
-}
-
-/**
- * NEW: Bulk update content time periods
- */
-async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
-  try {
-    const track = await Track.findById(trackId);
-    if (!track) {
-      throw new Error('Track not found');
-    }
-
-    const trackType = track.trackType;
-    if (!['weeks', 'days', 'months', 'semester'].includes(trackType)) {
-      return { message: 'Track type does not support time periods', updated: 0 };
-    }
-
-    // Get all content for this track
-    const allContent = await Content.find({
-      examId,
-      subjectId,
-      trackId,
-      subCategoryId,
-      isActive: true
-    });
-
-    let updateCount = 0;
-
-    for (const content of allContent) {
-      let timeNumber = null;
-      let timeName = null;
-      let timeKey = null;
-
-      // Extract time information from name
-      if (trackType === 'weeks') {
-        const weekMatch = content.name.match(/week(\d+)/i);
-        if (weekMatch) {
-          timeNumber = parseInt(weekMatch[1]);
-          timeName = `Week ${timeNumber}`;
-          timeKey = 'week';
-        }
-      } else if (trackType === 'days') {
-        const dayMatch = content.name.match(/day(\d+)/i);
-        if (dayMatch) {
-          timeNumber = parseInt(dayMatch[1]);
-          timeName = `Day ${timeNumber}`;
-          timeKey = 'day';
-        }
-      } else if (trackType === 'months') {
-        const monthMatch = content.name.match(/month(\d+)/i);
-        if (monthMatch) {
-          timeNumber = parseInt(monthMatch[1]);
-          const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                             'July', 'August', 'September', 'October', 'November', 'December'];
-          timeName = monthNames[timeNumber - 1] || `Month ${timeNumber}`;
-          timeKey = 'month';
-        }
-      } else if (trackType === 'semester') {
-        const semesterMatch = content.name.match(/semester(\d+)/i);
-        if (semesterMatch) {
-          timeNumber = parseInt(semesterMatch[1]);
-          const semesterNames = ['First Semester', 'Second Semester', 'Third Semester', 'Fourth Semester'];
-          timeName = semesterNames[timeNumber - 1] || `Semester ${timeNumber}`;
-          timeKey = 'semester';
-        }
-      }
-
-      // Update metadata if time information was found
-      if (timeNumber && timeKey) {
-        const updatedMetadata = {
-          ...content.metadata,
-          timeBasedContent: true,
-          [timeKey]: timeNumber,
-          [`${timeKey}Name`]: timeName
-        };
-
-        await Content.findByIdAndUpdate(content._id, {
-          metadata: updatedMetadata
-        });
-
-        updateCount++;
-      }
-    }
-
-    return {
-      message: `Updated ${updateCount} content items with time period metadata`,
-      updated: updateCount,
-      total: allContent.length,
-      trackType
-    };
-  } catch (error) {
-    console.error('Error updating content time periods:', error);
-    throw error;
-  }
-}
-
-
-
-  // ========== ENHANCED TOPIC MANAGEMENT METHODS ==========
+  // ========== TOPIC MANAGEMENT METHODS ==========
   
   /**
-   * NEW: Validate if a topic exists and is approved for the given context
+   * Validate if a topic exists and is approved for the given context
    */
   async validateTopicForContent(examId, subjectId, topicName) {
     try {
@@ -1003,7 +576,7 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
   }
 
   /**
-   * NEW: Get all approved topics for a subject
+   * Get all approved topics for a subject
    */
   async getApprovedTopicsForSubject(examId, subjectId) {
     try {
@@ -1021,10 +594,61 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
   }
 
   /**
-   * NEW: Bulk validate topics for content upload
+   * NEW: Get topic statistics across exam
    */
-  async validateTopicsForBulkContent(contentArray) {
+  async getTopicStatistics(examId) {
     try {
+      const subjects = await Subject.find({ examId, isActive: true });
+      const stats = [];
+
+      for (const subject of subjects) {
+        const topicCount = await Topic.countDocuments({
+          examId,
+          subjectId: subject._id,
+          isActive: true
+        });
+
+        const contentCount = await Content.countDocuments({
+          examId,
+          subjectId: subject._id,
+          isActive: true
+        });
+
+        const questionCount = await Question.countDocuments({
+          examId,
+          subjectId: subject._id,
+          isActive: true
+        });
+
+        stats.push({
+          subject: {
+            id: subject._id,
+            name: subject.name,
+            displayName: subject.displayName
+          },
+          topicCount,
+          contentCount,
+          questionCount,
+          averageContentPerTopic: topicCount > 0 ? (contentCount / topicCount).toFixed(2) : 0,
+          averageQuestionsPerTopic: topicCount > 0 ? (questionCount / topicCount).toFixed(2) : 0
+        });
+      }
+
+      return stats;
+    } catch (error) {
+      console.error('Error getting topic statistics:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * NEW: Enhanced content creation with mandatory topic validation
+   */
+  async createBulkContentWithValidation(contentArray) {
+    try {
+      const results = { created: [], errors: [], duplicates: [] };
+      
+      // First, validate all topics
       const validationResults = {
         validItems: [],
         invalidItems: [],
@@ -1081,7 +705,7 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
         if (topicValidation.isValid) {
           validationResults.validItems.push({
             index,
-            name: contentData.name,
+            contentData,
             examId: exam._id,
             subjectId: subject._id,
             topicId: topicValidation.topicId,
@@ -1108,51 +732,239 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
       validationResults.summary.uniqueTopics = Array.from(validationResults.summary.uniqueTopics);
       validationResults.summary.missingTopics = Array.from(validationResults.summary.missingTopics);
 
-      return validationResults;
+      // If there are invalid items, return validation errors
+      if (validationResults.invalidItems.length > 0) {
+        return {
+          success: false,
+          message: `Validation failed: ${validationResults.invalidItems.length} items have invalid topics`,
+          validation: validationResults,
+          results: { created: [], errors: validationResults.invalidItems, duplicates: [] }
+        };
+      }
+
+      // If validation passes, proceed with creation
+      for (const validItem of validationResults.validItems) {
+        try {
+          const contentData = validItem.contentData;
+          
+          // Resolve all required IDs
+          const exam = await Exam.findOne({ name: contentData.examName?.toUpperCase() });
+          const subject = await Subject.findOne({ 
+            examId: exam?._id, 
+            name: contentData.subjectName 
+          });
+          const subCategory = await SubCategory.findOne({ 
+            examId: exam?._id,
+            name: contentData.subCategoryName?.toLowerCase() 
+          });
+          const track = await Track.findOne({ 
+            examId: exam?._id, 
+            subCategoryId: subCategory?._id,
+            name: contentData.trackName 
+          });
+
+          if (!exam || !subject || !track || !subCategory) {
+            results.errors.push({
+              index: validItem.index,
+              name: contentData.name || 'Unknown',
+              error: 'Context resolution failed'
+            });
+            continue;
+          }
+
+          const completeContentData = {
+            examId: exam._id,
+            subjectId: subject._id,
+            trackId: track._id,
+            subCategoryId: subCategory._id,
+            topicId: validItem.topicId,
+            name: contentData.name,
+            displayName: contentData.displayName,
+            description: contentData.description || '',
+            filePath: contentData.filePath,
+            fileType: contentData.fileType,
+            fileSize: contentData.fileSize || 0,
+            duration: contentData.duration,
+            orderIndex: contentData.orderIndex || 0,
+            metadata: contentData.metadata || {}
+          };
+
+          const newContent = await this.createContent(completeContentData);
+          results.created.push({
+            id: newContent._id,
+            name: newContent.name
+          });
+          
+        } catch (error) {
+          if (error.code === 11000) {
+            results.duplicates.push({
+              index: validItem.index,
+              name: validItem.contentData.name
+            });
+          } else {
+            results.errors.push({
+              index: validItem.index,
+              name: validItem.contentData.name || 'Unknown',
+              error: error.message
+            });
+          }
+        }
+      }
+
+      return {
+        success: true,
+        message: `Successfully processed ${results.created.length} content items`,
+        validation: validationResults,
+        results
+      };
     } catch (error) {
-      console.error('Error validating topics for bulk content:', error);
+      console.error('Error creating bulk content with validation:', error);
       throw error;
     }
   }
 
   /**
-   * NEW: Enhanced content creation with mandatory topic validation
+   * NEW: Enhanced question creation with mandatory topic validation
    */
-  async createContentWithTopicValidation(contentData) {
+  async createBulkQuestionsWithValidation(questionsArray) {
     try {
-      const { examId, subjectId, topicName, ...restData } = contentData;
+      const results = { created: [], errors: [], duplicates: [] };
       
-      // Validate topic first
-      const topicValidation = await this.validateTopicForContent(
-        examId, 
-        subjectId, 
-        topicName
-      );
+      for (const [index, questionData] of questionsArray.entries()) {
+        try {
+          // Check if question was pre-validated (from route validation)
+          if (questionData._preValidated) {
+            // Use pre-validated topic ID
+            const topicId = questionData._preValidated.topicId;
+            
+            // Resolve context
+            const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
+            const subject = await Subject.findOne({ 
+              examId: exam?._id, 
+              name: questionData.subject 
+            });
+            
+            const pastQuestionsSubCategory = await SubCategory.findOne({
+              examId: exam?._id,
+              name: 'pastquestions'
+            });
+            
+            const track = await Track.findOne({ 
+              examId: exam?._id, 
+              subCategoryId: pastQuestionsSubCategory?._id,
+              name: questionData.year
+            });
 
-      if (!topicValidation.isValid) {
-        throw new Error(topicValidation.message);
+            if (!exam || !subject || !track || !topicId) {
+              results.errors.push({
+                index,
+                error: 'Context resolution failed'
+              });
+              continue;
+            }
+
+            const completeQuestionData = {
+              examId: exam._id,
+              subjectId: subject._id,
+              trackId: track._id,
+              topicId: topicId,
+              year: questionData.year,
+              question: questionData.question,
+              questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+              correctAnswer: questionData.correct_answer,
+              incorrectAnswers: questionData.incorrect_answers,
+              explanation: questionData.explanation || '',
+              difficulty: questionData.difficulty || 'medium',
+              orderIndex: questionData.orderIndex || 0,
+              metadata: questionData.metadata || {}
+            };
+
+            const newQuestion = await this.createQuestion(completeQuestionData);
+            results.created.push({
+              id: newQuestion._id,
+              topic: newQuestion.topicId
+            });
+          } else {
+            // Fallback to original validation logic
+            const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
+            const subject = await Subject.findOne({ 
+              examId: exam?._id, 
+              name: questionData.subject 
+            });
+            
+            const pastQuestionsSubCategory = await SubCategory.findOne({
+              examId: exam?._id,
+              name: 'pastquestions'
+            });
+            
+            const track = await Track.findOne({ 
+              examId: exam?._id, 
+              subCategoryId: pastQuestionsSubCategory?._id,
+              name: questionData.year
+            });
+            
+            // Validate topic
+            let topicId = null;
+            if (questionData.topic) {
+              const topicValidation = await this.validateTopicForContent(
+                exam?._id,
+                subject?._id,
+                questionData.topic
+              );
+              
+              if (!topicValidation.isValid) {
+                throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
+              }
+              topicId = topicValidation.topicId;
+            }
+
+            if (!exam || !subject || !track || !topicId) {
+              results.errors.push({
+                index,
+                error: 'Context or topic validation failed'
+              });
+              continue;
+            }
+
+            const completeQuestionData = {
+              examId: exam._id,
+              subjectId: subject._id,
+              trackId: track._id,
+              topicId: topicId,
+              year: questionData.year,
+              question: questionData.question,
+              questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+              correctAnswer: questionData.correct_answer,
+              incorrectAnswers: questionData.incorrect_answers,
+              explanation: questionData.explanation || '',
+              difficulty: questionData.difficulty || 'medium',
+              orderIndex: questionData.orderIndex || 0,
+              metadata: questionData.metadata || {}
+            };
+
+            const newQuestion = await this.createQuestion(completeQuestionData);
+            results.created.push({
+              id: newQuestion._id,
+              topic: newQuestion.topicId
+            });
+          }
+          
+        } catch (error) {
+          results.errors.push({
+            index,
+            error: error.message
+          });
+        }
       }
-
-      // Create content with validated topic
-      const completeContentData = {
-        examId,
-        subjectId,
-        topicId: topicValidation.topicId,
-        ...restData
-      };
-
-      const content = new Content(completeContentData);
-      await content.save();
-      return await content.populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId']);
+      
+      return results;
     } catch (error) {
-      console.error('Error creating content with topic validation:', error);
+      console.error('Error creating bulk questions with validation:', error);
       throw error;
     }
   }
 
- 
-
-  // ========== EXISTING METHODS (Updated where needed) ==========
+  // ========== EXISTING METHODS (Kept for compatibility and utility) ==========
 
   // Exam methods
   async createExam(examData) {
@@ -1316,15 +1128,6 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
       return results;
     } catch (error) {
       console.error('Error creating bulk topics:', error);
-      throw error;
-    }
-  }
-
-  async getTopicById(topicId) {
-    try {
-      return await Topic.findById(topicId).populate(['examId', 'subjectId']);
-    } catch (error) {
-      console.error('Error getting topic by id:', error);
       throw error;
     }
   }
@@ -1496,14 +1299,9 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
     }
   }
 
-  // Content methods (ENHANCED with topic validation)
+  // Content methods
   async createContent(contentData) {
     try {
-      // If topicName is provided instead of topicId, validate and convert
-      if (contentData.topicName && !contentData.topicId) {
-        return await this.createContentWithTopicValidation(contentData);
-      }
-      
       const content = new Content(contentData);
       await content.save();
       return await content.populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId']);
@@ -1555,7 +1353,7 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
             name: contentData.trackName 
           });
 
-          // NEW: Topic validation
+          // Topic validation
           let topicId = null;
           if (contentData.topicName) {
             const topicValidation = await this.validateTopicForContent(
@@ -1584,7 +1382,7 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
             subjectId: subject._id,
             trackId: track._id,
             subCategoryId: subCategory._id,
-            topicId: topicId, // Now mandatory
+            topicId: topicId,
             name: contentData.name,
             displayName: contentData.displayName,
             description: contentData.description || '',
@@ -1625,7 +1423,7 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
     }
   }
 
-  // Question methods (updated to work with new structure)
+  // Question methods
   async createQuestion(questionData) {
     try {
       const question = new Question(questionData);
@@ -1637,90 +1435,89 @@ async updateContentTimePeriods(examId, subjectId, trackId, subCategoryId) {
     }
   }
 
-async createBulkQuestions(questionsArray) {
-  try {
-    const results = { created: [], errors: [], duplicates: [] };
-    
-    for (const [index, questionData] of questionsArray.entries()) {
-      try {
-        // Resolve names to IDs
-        const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
-        const subject = await Subject.findOne({ 
-          examId: exam?._id, 
-          name: questionData.subject 
-        });
-        
-        // For past questions, find track in the pastquestions subcategory
-        const pastQuestionsSubCategory = await SubCategory.findOne({
-          examId: exam?._id,
-          name: 'pastquestions'
-        });
-        
-        // FIX: Use questionData.year to match track name
-        const track = await Track.findOne({ 
-          examId: exam?._id, 
-          subCategoryId: pastQuestionsSubCategory?._id,
-          name: questionData.year // Track name should match the year
-        });
-        
-        // NEW: Enhanced topic validation for questions
-        let topicId = null;
-        if (questionData.topic) {
-          const topicValidation = await this.validateTopicForContent(
-            exam?._id,
-            subject?._id,
-            questionData.topic
-          );
+  // LEGACY: Keep original method for backward compatibility
+  async createBulkQuestions(questionsArray) {
+    try {
+      const results = { created: [], errors: [], duplicates: [] };
+      
+      for (const [index, questionData] of questionsArray.entries()) {
+        try {
+          // Resolve names to IDs
+          const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
+          const subject = await Subject.findOne({ 
+            examId: exam?._id, 
+            name: questionData.subject 
+          });
           
-          if (!topicValidation.isValid) {
-            throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
+          const pastQuestionsSubCategory = await SubCategory.findOne({
+            examId: exam?._id,
+            name: 'pastquestions'
+          });
+          
+          const track = await Track.findOne({ 
+            examId: exam?._id, 
+            subCategoryId: pastQuestionsSubCategory?._id,
+            name: questionData.year
+          });
+          
+          // Topic validation
+          let topicId = null;
+          if (questionData.topic) {
+            const topicValidation = await this.validateTopicForContent(
+              exam?._id,
+              subject?._id,
+              questionData.topic
+            );
+            
+            if (!topicValidation.isValid) {
+              throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
+            }
+            topicId = topicValidation.topicId;
           }
-          topicId = topicValidation.topicId;
-        }
 
-        if (!exam || !subject || !track || !topicId) {
+          if (!exam || !subject || !track || !topicId) {
+            results.errors.push({
+              index,
+              error: 'Exam, Subject, Track, or Topic not found/invalid'
+            });
+            continue;
+          }
+
+          const completeQuestionData = {
+            examId: exam._id,
+            subjectId: subject._id,
+            trackId: track._id,
+            topicId: topicId,
+            year: questionData.year,
+            question: questionData.question,
+            questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+            correctAnswer: questionData.correct_answer,
+            incorrectAnswers: questionData.incorrect_answers,
+            explanation: questionData.explanation || '',
+            difficulty: questionData.difficulty || 'medium',
+            orderIndex: questionData.orderIndex || 0
+          };
+
+          const newQuestion = await this.createQuestion(completeQuestionData);
+          results.created.push({
+            id: newQuestion._id,
+            topic: newQuestion.topicId
+          });
+          
+        } catch (error) {
           results.errors.push({
             index,
-            error: 'Exam, Subject, Track, or Topic not found/invalid'
+            error: error.message
           });
-          continue;
         }
-
-        const completeQuestionData = {
-          examId: exam._id,
-          subjectId: subject._id,
-          trackId: track._id,
-          topicId: topicId,
-          year: questionData.year,
-          question: questionData.question,
-          questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
-          correctAnswer: questionData.correct_answer,
-          incorrectAnswers: questionData.incorrect_answers,
-          explanation: questionData.explanation || '',
-          difficulty: questionData.difficulty || 'medium',
-          orderIndex: questionData.orderIndex || 0
-        };
-
-        const newQuestion = await this.createQuestion(completeQuestionData);
-        results.created.push({
-          id: newQuestion._id,
-          topic: newQuestion.topicId
-        });
-        
-      } catch (error) {
-        results.errors.push({
-          index,
-          error: error.message
-        });
       }
+      
+      return results;
+    } catch (error) {
+      console.error('Error creating bulk questions:', error);
+      throw error;
     }
-    
-    return results;
-  } catch (error) {
-    console.error('Error creating bulk questions:', error);
-    throw error;
   }
-}
 
   async getQuestionsByFilters(filters) {
     try {
@@ -1745,107 +1542,81 @@ async createBulkQuestions(questionsArray) {
     }
   }
 
-  // Multi-selection methods for Past Questions
-  async getQuestionsMultiSelection(examId, subjectId, trackIds, topicIds) {
+  // Complete structure methods with track-specific topic filtering
+  async getCompleteUserFlow(examId) {
     try {
-      const query = {
-        examId,
-        subjectId,
-        isActive: true
+      const exam = await Exam.findById(examId);
+      if (!exam) return null;
+
+      // Get all subcategories for this exam
+      const subCategories = await SubCategory.find({ examId, isActive: true })
+        .sort({ orderIndex: 1, name: 1 });
+      
+      const structure = {
+        exam,
+        subCategories: []
       };
 
-      if (trackIds && trackIds.length > 0) {
-        query.trackId = { $in: trackIds };
+      for (const subCategory of subCategories) {
+        // Get subjects available in this subcategory
+        const subjects = await this.getSubjectsInSubCategory(examId, subCategory._id);
+        
+        // Get tracks for this subcategory
+        const tracks = await this.getTracksInSubCategory(examId, subCategory._id);
+
+        const subCategoryData = {
+          ...subCategory.toObject(),
+          subjects: subjects.map(subject => subject.toObject()),
+          tracks: []
+        };
+
+        for (const track of tracks) {
+          let trackData = {
+            ...track.toObject()
+          };
+
+          // For past questions, get topics that have questions for each track
+          if (subCategory.name === 'pastquestions' || subCategory.contentType === 'json') {
+            trackData.subjectTopics = {};
+            for (const subject of subjects) {
+              // Use the new method to get only topics with questions for this track
+              const topicsWithQuestions = await this.getTopicsWithQuestionsForTrack(
+                examId, subject._id, track._id
+              );
+              trackData.subjectTopics[subject._id] = topicsWithQuestions.map(topic => topic);
+            }
+          } else {
+            // For file-based content, get topics that have content for each track
+            trackData.subjectContent = {};
+            for (const subject of subjects) {
+              // Use the new method to get content grouped by track-specific topics
+              const contentGrouped = await this.getContentGroupedByTrackTopics(
+                examId, subject._id, track._id, subCategory._id
+              );
+              
+              trackData.subjectContent[subject._id] = {
+                topicsWithContent: contentGrouped.topicsWithContent,
+                contentByTopics: contentGrouped.contentByTopics,
+                totalTopics: contentGrouped.totalTopics,
+                totalContent: contentGrouped.totalContent
+              };
+            }
+          }
+
+          subCategoryData.tracks.push(trackData);
+        }
+
+        structure.subCategories.push(subCategoryData);
       }
 
-      if (topicIds && topicIds.length > 0) {
-        query.topicId = { $in: topicIds };
-      }
-
-      return await Question.find(query)
-        .populate(['examId', 'subjectId', 'trackId', 'topicId'])
-        .sort({ year: -1, 'topicId.orderIndex': 1 });
+      return structure;
     } catch (error) {
-      console.error('Error getting questions with multi-selection:', error);
+      console.error('Error getting complete user flow:', error);
       throw error;
     }
   }
 
-// UPDATED: Complete structure methods with track-specific topic filtering
-async getCompleteUserFlow(examId) {
-  try {
-    const exam = await Exam.findById(examId);
-    if (!exam) return null;
-
-    // Get all subcategories for this exam
-    const subCategories = await SubCategory.find({ examId, isActive: true })
-      .sort({ orderIndex: 1, name: 1 });
-    
-    const structure = {
-      exam,
-      subCategories: []
-    };
-
-    for (const subCategory of subCategories) {
-      // Get subjects available in this subcategory
-      const subjects = await this.getSubjectsInSubCategory(examId, subCategory._id);
-      
-      // Get tracks for this subcategory
-      const tracks = await this.getTracksInSubCategory(examId, subCategory._id);
-
-      const subCategoryData = {
-        ...subCategory.toObject(),
-        subjects: subjects.map(subject => subject.toObject()),
-        tracks: []
-      };
-
-      for (const track of tracks) {
-        let trackData = {
-          ...track.toObject()
-        };
-
-        // UPDATED: For past questions, get topics that have questions for each track
-        if (subCategory.name === 'pastquestions' || subCategory.contentType === 'json') {
-          trackData.subjectTopics = {};
-          for (const subject of subjects) {
-            // Use the new method to get only topics with questions for this track
-            const topicsWithQuestions = await this.getTopicsWithQuestionsForTrack(
-              examId, subject._id, track._id
-            );
-            trackData.subjectTopics[subject._id] = topicsWithQuestions.map(topic => topic);
-          }
-        } else {
-          // UPDATED: For file-based content, get topics that have content for each track
-          trackData.subjectContent = {};
-          for (const subject of subjects) {
-            // Use the new method to get content grouped by track-specific topics
-            const contentGrouped = await this.getContentGroupedByTrackTopics(
-              examId, subject._id, track._id, subCategory._id
-            );
-            
-            trackData.subjectContent[subject._id] = {
-              topicsWithContent: contentGrouped.topicsWithContent,
-              contentByTopics: contentGrouped.contentByTopics,
-              totalTopics: contentGrouped.totalTopics,
-              totalContent: contentGrouped.totalContent
-            };
-          }
-        }
-
-        subCategoryData.tracks.push(trackData);
-      }
-
-      structure.subCategories.push(subCategoryData);
-    }
-
-    return structure;
-  } catch (error) {
-    console.error('Error getting complete user flow:', error);
-    throw error;
-  }
-}
-
-  // Validation methods (enhanced)
+  // Utility methods (kept for internal use)
   async validateExamExists(examId) {
     try {
       const exam = await Exam.findById(examId);
@@ -1912,85 +1683,6 @@ async getCompleteUserFlow(examId) {
     } catch (error) {
       console.error('Error validating subject availability:', error);
       return false;
-    }
-  }
-
-  // NEW: Enhanced validation for complete content upload
-  async validateCompleteContentStructure(examId, subjectId, trackId, subCategoryId, topicName) {
-    try {
-      const validationResults = {
-        examValid: false,
-        subjectValid: false,
-        trackValid: false,
-        subCategoryValid: false,
-        topicValid: false,
-        availabilityValid: false,
-        allValid: false,
-        errors: []
-      };
-
-      // Validate exam
-      validationResults.examValid = await this.validateExamExists(examId);
-      if (!validationResults.examValid) {
-        validationResults.errors.push('Exam not found');
-      }
-
-      // Validate subject
-      validationResults.subjectValid = await this.validateSubjectExists(examId, subjectId);
-      if (!validationResults.subjectValid) {
-        validationResults.errors.push('Subject not found');
-      }
-
-      // Validate track
-      validationResults.trackValid = await this.validateTrackExists(examId, subCategoryId, trackId);
-      if (!validationResults.trackValid) {
-        validationResults.errors.push('Track not found');
-      }
-
-      // Validate subcategory
-      const subCategory = await SubCategory.findById(subCategoryId);
-      validationResults.subCategoryValid = !!subCategory;
-      if (!validationResults.subCategoryValid) {
-        validationResults.errors.push('SubCategory not found');
-      }
-
-      // Validate topic
-      if (topicName) {
-        const topicValidation = await this.validateTopicForContent(examId, subjectId, topicName);
-        validationResults.topicValid = topicValidation.isValid;
-        if (!validationResults.topicValid) {
-          validationResults.errors.push(topicValidation.message);
-        }
-      }
-
-      // Validate subject availability
-      validationResults.availabilityValid = await this.validateSubjectAvailability(
-        examId, 
-        subjectId, 
-        subCategoryId
-      );
-      if (!validationResults.availabilityValid) {
-        validationResults.errors.push('Subject not available in this subcategory');
-      }
-
-      // Overall validation
-      validationResults.allValid = Object.keys(validationResults)
-        .filter(key => key.endsWith('Valid'))
-        .every(key => validationResults[key] === true);
-
-      return validationResults;
-    } catch (error) {
-      console.error('Error validating complete content structure:', error);
-      return {
-        examValid: false,
-        subjectValid: false,
-        trackValid: false,
-        subCategoryValid: false,
-        topicValid: false,
-        availabilityValid: false,
-        allValid: false,
-        errors: ['Validation error occurred']
-      };
     }
   }
 
@@ -2077,7 +1769,6 @@ async getCompleteUserFlow(examId) {
     }
   }
 
-
   async getContentById(contentId) {
     try {
       return await Content.findById(contentId)
@@ -2110,6 +1801,15 @@ async getCompleteUserFlow(examId) {
       );
     } catch (error) {
       console.error('Error deleting content:', error);
+      throw error;
+    }
+  }
+
+  async getTopicById(topicId) {
+    try {
+      return await Topic.findById(topicId).populate(['examId', 'subjectId']);
+    } catch (error) {
+      console.error('Error getting topic by id:', error);
       throw error;
     }
   }
