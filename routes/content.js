@@ -7,51 +7,6 @@ const { ExamModel } = require('../models/exam');
 const examModel = new ExamModel();
 
 
-/**
- * NEW: Pre-validate content for specific context
- * @route   POST /api/content/validate/:examName/:subjectName/:trackName/:subCategoryName
- * @desc    Validate content before upload for specific context
- * @access  Private
- */
-router.post('/validate/:examName/:subjectName/:trackName/:subCategoryName', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName } = req.params;
-    const { content } = req.body;
-    
-    if (!content || !Array.isArray(content) || content.length === 0) {
-      return res.status(400).json({ message: 'Content array is required' });
-    }
-
-    // Add context to each content item for validation
-    const enrichedContent = content.map(item => ({
-      examName,
-      subjectName,
-      trackName,
-      subCategoryName,
-      ...item
-    }));
-    
-    const validation = await examModel.validateTopicsForBulkContent(enrichedContent);
-    
-    res.json({
-      context: { examName, subjectName, trackName, subCategoryName },
-      canProceed: validation.summary.invalid === 0,
-      validation,
-      recommendations: {
-        message: validation.summary.invalid > 0 ? 
-          'Some content items have invalid topics. Please create missing topics or use approved topics.' : 
-          'All content items are valid and ready for upload.',
-        action: validation.summary.invalid > 0 ? 'fix_topics' : 'proceed_upload',
-        missingTopics: validation.summary.missingTopics,
-        validTopics: validation.summary.uniqueTopics
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// FIND THIS ROUTE IN YOUR routes/content.js FILE:
 router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (req, res) => {
   try {
     const { examName, subjectName, trackName, subCategoryName } = req.params;
@@ -900,7 +855,5 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:peri
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
-
-
 
 module.exports = router;
