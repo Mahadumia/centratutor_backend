@@ -1,4 +1,4 @@
-// models/exam.js - UPDATED: Cleaned unused methods + Added missing methods
+// models/exam.js - UPDATED: Enhanced bulk question methods with better duplicate handling
 const mongoose = require('mongoose');
 
 // Exam Schema - Main exam categories like JUPEB, WAEC, etc.
@@ -398,15 +398,380 @@ const Content = mongoose.model('Content', contentSchema);
 const Question = mongoose.model('Question', questionSchema);
 
 class ExamModel {
-  // ========== TRACK-SPECIFIC TOPIC METHODS ==========
+  // ========== ENHANCED BULK QUESTION CREATION METHODS ==========
   
   /**
-   * Get topics that have actual content for a specific track
-   * This is what should be used in step 8 of the user flow
+   * ENHANCED: Create bulk questions with better validation and duplicate handling
+   */
+  async createBulkQuestionsWithValidation(questionsArray) {
+    try {
+      const results = { created: [], errors: [], duplicates: [], skipped: [] };
+      
+      console.log(`🚀 Processing ${questionsArray.length} questions for bulk creation...`);
+      
+      for (const [index, questionData] of questionsArray.entries()) {
+        try {
+          // Check if question was pre-validated (from route validation)
+          if (questionData._preValidated && questionData._preValidated.contextResolved) {
+            // Use pre-validated context and topic data
+            const { contextResolved } = questionData._preValidated;
+            const topicId = questionData._preValidated.topicId;
+            
+            console.log(`📝 Processing question ${index + 1}: Using pre-validated context`);
+            
+            if (!contextResolved.exam?.id || !contextResolved.subject?.id || !contextResolved.track?.id || !topicId) {
+              console.error(`❌ Missing required context data for question ${index}:`, {
+                exam: contextResolved.exam?.id ? 'Present' : 'Missing',
+                subject: contextResolved.subject?.id ? 'Present' : 'Missing',
+                track: contextResolved.track?.id ? 'Present' : 'Missing',
+                topicId: topicId ? 'Present' : 'Missing'
+              });
+              
+              results.errors.push({
+                index,
+                error: 'Incomplete pre-validated context data'
+              });
+              continue;
+            }
+
+            // ENHANCED: Check for duplicates before creating
+            const duplicateCheck = await this.checkForDuplicateQuestion(
+              contextResolved.exam.id,
+              contextResolved.subject.id,
+              contextResolved.track.id,
+              topicId,
+              questionData.question,
+              questionData.year || questionData.metadata?.uploadYear || questionData.metadata?.week || questionData.metadata?.day || questionData.metadata?.semester
+            );
+
+            if (duplicateCheck.exists) {
+              console.log(`⚠️ Duplicate question found for ${index + 1}, skipping...`);
+              results.duplicates.push({
+                index,
+                reason: 'Question already exists with same content',
+                existingId: duplicateCheck.questionId,
+                timePeriod: duplicateCheck.timePeriod
+              });
+              continue;
+            }
+
+            const completeQuestionData = {
+              examId: contextResolved.exam.id,
+              subjectId: contextResolved.subject.id,
+              trackId: contextResolved.track.id,
+              topicId: topicId,
+              year: questionData.year,
+              question: questionData.question,
+              questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+              correctAnswer: questionData.correct_answer,
+              incorrectAnswers: questionData.incorrect_answers,
+              explanation: questionData.explanation || '',
+              difficulty: questionData.difficulty || 'medium',
+              orderIndex: questionData.metadata?.orderIndex || index,
+              metadata: {
+                ...questionData.metadata,
+                createdVia: 'bulk_upload_pre_validated',
+                uploadTimestamp: new Date()
+              }
+            };
+
+            const newQuestion = await this.createQuestion(completeQuestionData);
+            results.created.push({
+              id: newQuestion._id,
+              topic: newQuestion.topicId,
+              year: newQuestion.year,
+              trackUsed: contextResolved.track.name,
+              timePeriod: questionData.metadata?.timePeriod
+            });
+            
+            console.log(`✅ Successfully created question ${index + 1}`);
+            
+          } else {
+            // Fallback: Manual context resolution for non-pre-validated questions
+            console.log(`📝 Processing question ${index + 1}: Manual context resolution`);
+            
+            const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
+            const subject = await Subject.findOne({ 
+              examId: exam?._id, 
+              name: questionData.subject 
+            });
+            
+            const pastQuestionsSubCategory = await SubCategory.findOne({
+              examId: exam?._id,
+              name: 'pastquestions'
+            });
+            
+            // Enhanced track resolution with multiple fallback strategies
+            let track = null;
+            
+            // Strategy 1: Use trackName if provided
+            if (questionData.trackName) {
+              track = await Track.findOne({ 
+                examId: exam?._id, 
+                subCategoryId: pastQuestionsSubCategory?._id,
+                name: questionData.trackName,
+                isActive: true
+              });
+            }
+            
+            // Strategy 2: Find by year match (legacy support)
+            if (!track && questionData.year) {
+              track = await Track.findOne({ 
+                examId: exam?._id, 
+                subCategoryId: pastQuestionsSubCategory?._id,
+                name: questionData.year,
+                isActive: true
+              });
+            }
+            
+            // Strategy 3: Find any years-type track
+            if (!track) {
+              track = await Track.findOne({ 
+                examId: exam?._id, 
+                subCategoryId: pastQuestionsSubCategory?._id,
+                trackType: 'years',
+                isActive: true
+              });
+            }
+            
+            // Validate topic
+            let topicId = null;
+            if (questionData.topic) {
+              const topicValidation = await this.validateTopicForContent(
+                exam?._id,
+                subject?._id,
+                questionData.topic
+              );
+              
+              if (!topicValidation.isValid) {
+                throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
+              }
+              topicId = topicValidation.topicId;
+            }
+
+            if (!exam || !subject || !track || !topicId) {
+              console.error(`❌ Manual context resolution failed for question ${index}:`, {
+                exam: exam?.name || 'Not found',
+                subject: subject?.name || 'Not found',
+                track: track?.name || 'Not found',
+                topicId: topicId ? 'Found' : 'Not found'
+              });
+              
+              results.errors.push({
+                index,
+                error: 'Manual context or topic validation failed'
+              });
+              continue;
+            }
+
+            // ENHANCED: Check for duplicates before creating
+            const duplicateCheck = await this.checkForDuplicateQuestion(
+              exam._id,
+              subject._id,
+              track._id,
+              topicId,
+              questionData.question,
+              questionData.year
+            );
+
+            if (duplicateCheck.exists) {
+              console.log(`⚠️ Duplicate question found for ${index + 1} (manual resolution), skipping...`);
+              results.duplicates.push({
+                index,
+                reason: 'Question already exists with same content',
+                existingId: duplicateCheck.questionId,
+                year: questionData.year
+              });
+              continue;
+            }
+
+            const completeQuestionData = {
+              examId: exam._id,
+              subjectId: subject._id,
+              trackId: track._id,
+              topicId: topicId,
+              year: questionData.year,
+              question: questionData.question,
+              questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+              correctAnswer: questionData.correct_answer,
+              incorrectAnswers: questionData.incorrect_answers,
+              explanation: questionData.explanation || '',
+              difficulty: questionData.difficulty || 'medium',
+              orderIndex: questionData.orderIndex || index,
+              metadata: {
+                ...questionData.metadata,
+                createdVia: 'bulk_upload_manual_resolution',
+                uploadTimestamp: new Date()
+              }
+            };
+
+            const newQuestion = await this.createQuestion(completeQuestionData);
+            results.created.push({
+              id: newQuestion._id,
+              topic: newQuestion.topicId,
+              year: newQuestion.year,
+              trackUsed: track.name
+            });
+            
+            console.log(`✅ Successfully created question ${index + 1} via manual resolution`);
+          }
+          
+        } catch (error) {
+          console.error(`❌ Error creating question ${index + 1}:`, error.message);
+          results.errors.push({
+            index,
+            error: error.message
+          });
+        }
+      }
+      
+      console.log(`✅ Bulk question creation completed: ${results.created.length} created, ${results.errors.length} errors, ${results.duplicates.length} duplicates`);
+      return results;
+    } catch (error) {
+      console.error('❌ Error in createBulkQuestionsWithValidation:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * NEW: Check for duplicate questions
+   */
+  async checkForDuplicateQuestion(examId, subjectId, trackId, topicId, questionText, timePeriodValue) {
+    try {
+      // Clean and normalize question text for comparison
+      const normalizedQuestion = questionText.trim().toLowerCase().replace(/\s+/g, ' ');
+      
+      // Build query to find potential duplicates
+      const query = {
+        examId,
+        subjectId,
+        trackId,
+        topicId,
+        isActive: true
+      };
+
+      // Add time period filter if provided
+      if (timePeriodValue) {
+        // Try different time period fields
+        query.$or = [
+          { year: timePeriodValue.toString() },
+          { 'metadata.week': parseInt(timePeriodValue) },
+          { 'metadata.day': parseInt(timePeriodValue) },
+          { 'metadata.semester': parseInt(timePeriodValue) },
+          { 'metadata.uploadYear': timePeriodValue.toString() }
+        ];
+      }
+
+      const existingQuestions = await Question.find(query);
+      
+      // Check for exact question text matches
+      for (const existingQuestion of existingQuestions) {
+        const existingNormalized = existingQuestion.question.trim().toLowerCase().replace(/\s+/g, ' ');
+        
+        if (existingNormalized === normalizedQuestion) {
+          return {
+            exists: true,
+            questionId: existingQuestion._id,
+            timePeriod: existingQuestion.year || existingQuestion.metadata?.week || existingQuestion.metadata?.day || existingQuestion.metadata?.semester,
+            existingQuestion: existingQuestion
+          };
+        }
+      }
+
+      return { exists: false };
+    } catch (error) {
+      console.error('Error checking for duplicate question:', error);
+      return { exists: false, error: error.message };
+    }
+  }
+
+  /**
+   * NEW: Get questions with better filtering (no difficulty/limit constraints)
+   */
+  async getQuestionsByFilters(filters) {
+    try {
+      const query = { isActive: true };
+      
+      if (filters.examId) query.examId = filters.examId;
+      if (filters.subjectId) query.subjectId = filters.subjectId;
+      if (filters.trackId) query.trackId = filters.trackId;
+      if (filters.topicId) query.topicId = filters.topicId;
+      if (filters.year) query.year = filters.year;
+      
+      // Enhanced topic filtering
+      if (filters.topicIds && filters.topicIds.length > 0) {
+        query.topicId = { $in: filters.topicIds };
+      }
+
+      // Time period metadata filters
+      if (filters.week) query['metadata.week'] = filters.week;
+      if (filters.day) query['metadata.day'] = filters.day;
+      if (filters.semester) query['metadata.semester'] = filters.semester;
+
+      return await Question.find(query)
+        .populate(['examId', 'subjectId', 'trackId', 'topicId'])
+        .sort({ orderIndex: 1, _id: 1 });
+    } catch (error) {
+      console.error('Error getting questions by filters:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ENHANCED: Get topics with questions for track (no constraints)
+   */
+  async getTopicsWithQuestionsForTrack(examId, subjectId, trackId) {
+    try {
+      // Get ALL questions for the specific track (removed any filtering constraints)
+      const questions = await Question.find({
+        examId,
+        subjectId,
+        trackId,
+        isActive: true
+      }).populate('topicId');
+
+      // Extract unique topics from the questions
+      const topicsWithQuestions = [];
+      const topicIds = new Set();
+
+      questions.forEach(questionItem => {
+        if (questionItem.topicId && !topicIds.has(questionItem.topicId._id.toString())) {
+          topicIds.add(questionItem.topicId._id.toString());
+          topicsWithQuestions.push({
+            ...questionItem.topicId.toObject(),
+            questionCount: 0 // Will be calculated below
+          });
+        }
+      });
+
+      // Count questions per topic
+      topicsWithQuestions.forEach(topic => {
+        topic.questionCount = questions.filter(q => 
+          q.topicId._id.toString() === topic._id.toString()
+        ).length;
+      });
+
+      // Sort by orderIndex and name
+      topicsWithQuestions.sort((a, b) => {
+        if (a.orderIndex !== b.orderIndex) {
+          return (a.orderIndex || 0) - (b.orderIndex || 0);
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      return topicsWithQuestions;
+    } catch (error) {
+      console.error('Error getting topics with questions for track:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ENHANCED: Get topics with content for track (no constraints)
    */
   async getTopicsWithContentForTrack(examId, subjectId, trackId, subCategoryId) {
     try {
-      // Get all content for the specific track
+      // Get ALL content for the specific track (removed any filtering constraints)
       const content = await Content.find({
         examId,
         subjectId,
@@ -447,55 +812,6 @@ class ExamModel {
       return topicsWithContent;
     } catch (error) {
       console.error('Error getting topics with content for track:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * NEW: Get topics that have questions for a specific track
-   */
-  async getTopicsWithQuestionsForTrack(examId, subjectId, trackId) {
-    try {
-      // Get all questions for the specific track
-      const questions = await Question.find({
-        examId,
-        subjectId,
-        trackId,
-        isActive: true
-      }).populate('topicId');
-
-      // Extract unique topics from the questions
-      const topicsWithQuestions = [];
-      const topicIds = new Set();
-
-      questions.forEach(questionItem => {
-        if (questionItem.topicId && !topicIds.has(questionItem.topicId._id.toString())) {
-          topicIds.add(questionItem.topicId._id.toString());
-          topicsWithQuestions.push({
-            ...questionItem.topicId.toObject(),
-            questionCount: 0 // Will be calculated below
-          });
-        }
-      });
-
-      // Count questions per topic
-      topicsWithQuestions.forEach(topic => {
-        topic.questionCount = questions.filter(q => 
-          q.topicId._id.toString() === topic._id.toString()
-        ).length;
-      });
-
-      // Sort by orderIndex and name
-      topicsWithQuestions.sort((a, b) => {
-        if (a.orderIndex !== b.orderIndex) {
-          return (a.orderIndex || 0) - (b.orderIndex || 0);
-        }
-        return a.name.localeCompare(b.name);
-      });
-
-      return topicsWithQuestions;
-    } catch (error) {
-      console.error('Error getting topics with questions for track:', error);
       throw error;
     }
   }
@@ -823,193 +1139,6 @@ class ExamModel {
     }
   }
 
-  /**
-   * NEW: Enhanced question creation with mandatory topic validation
-   */
-async createBulkQuestionsWithValidation(questionsArray) {
-  try {
-    const results = { created: [], errors: [], duplicates: [] };
-    
-    console.log(`🚀 Processing ${questionsArray.length} questions for bulk creation...`);
-    
-    for (const [index, questionData] of questionsArray.entries()) {
-      try {
-        // Check if question was pre-validated (from route validation)
-        if (questionData._preValidated && questionData._preValidated.contextResolved) {
-          // Use pre-validated context and topic data
-          const { contextResolved } = questionData._preValidated;
-          const topicId = questionData._preValidated.topicId;
-          
-          console.log(`📝 Processing question ${index + 1}: Using pre-validated context`);
-          
-          if (!contextResolved.exam?.id || !contextResolved.subject?.id || !contextResolved.track?.id || !topicId) {
-            console.error(`❌ Missing required context data for question ${index}:`, {
-              exam: contextResolved.exam?.id ? 'Present' : 'Missing',
-              subject: contextResolved.subject?.id ? 'Present' : 'Missing',
-              track: contextResolved.track?.id ? 'Present' : 'Missing',
-              topicId: topicId ? 'Present' : 'Missing'
-            });
-            
-            results.errors.push({
-              index,
-              error: 'Incomplete pre-validated context data'
-            });
-            continue;
-          }
-
-          const completeQuestionData = {
-            examId: contextResolved.exam.id,
-            subjectId: contextResolved.subject.id,
-            trackId: contextResolved.track.id,
-            topicId: topicId,
-            year: questionData.year,
-            question: questionData.question,
-            questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
-            correctAnswer: questionData.correct_answer,
-            incorrectAnswers: questionData.incorrect_answers,
-            explanation: questionData.explanation || '',
-            difficulty: questionData.difficulty || 'medium',
-            orderIndex: questionData.metadata?.orderIndex || index,
-            metadata: {
-              ...questionData.metadata,
-              createdVia: 'bulk_upload_pre_validated'
-            }
-          };
-
-          const newQuestion = await this.createQuestion(completeQuestionData);
-          results.created.push({
-            id: newQuestion._id,
-            topic: newQuestion.topicId,
-            year: newQuestion.year,
-            trackUsed: contextResolved.track.name
-          });
-          
-          console.log(`✅ Successfully created question ${index + 1}`);
-          
-        } else {
-          // Fallback: Manual context resolution for non-pre-validated questions
-          console.log(`📝 Processing question ${index + 1}: Manual context resolution`);
-          
-          const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
-          const subject = await Subject.findOne({ 
-            examId: exam?._id, 
-            name: questionData.subject 
-          });
-          
-          const pastQuestionsSubCategory = await SubCategory.findOne({
-            examId: exam?._id,
-            name: 'pastquestions'
-          });
-          
-          // Enhanced track resolution with multiple fallback strategies
-          let track = null;
-          
-          // Strategy 1: Use trackName if provided
-          if (questionData.trackName) {
-            track = await Track.findOne({ 
-              examId: exam?._id, 
-              subCategoryId: pastQuestionsSubCategory?._id,
-              name: questionData.trackName,
-              isActive: true
-            });
-          }
-          
-          // Strategy 2: Find by year match (legacy support)
-          if (!track && questionData.year) {
-            track = await Track.findOne({ 
-              examId: exam?._id, 
-              subCategoryId: pastQuestionsSubCategory?._id,
-              name: questionData.year,
-              isActive: true
-            });
-          }
-          
-          // Strategy 3: Find any years-type track
-          if (!track) {
-            track = await Track.findOne({ 
-              examId: exam?._id, 
-              subCategoryId: pastQuestionsSubCategory?._id,
-              trackType: 'years',
-              isActive: true
-            });
-          }
-          
-          // Validate topic
-          let topicId = null;
-          if (questionData.topic) {
-            const topicValidation = await this.validateTopicForContent(
-              exam?._id,
-              subject?._id,
-              questionData.topic
-            );
-            
-            if (!topicValidation.isValid) {
-              throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
-            }
-            topicId = topicValidation.topicId;
-          }
-
-          if (!exam || !subject || !track || !topicId) {
-            console.error(`❌ Manual context resolution failed for question ${index}:`, {
-              exam: exam?.name || 'Not found',
-              subject: subject?.name || 'Not found',
-              track: track?.name || 'Not found',
-              topicId: topicId ? 'Found' : 'Not found'
-            });
-            
-            results.errors.push({
-              index,
-              error: 'Manual context or topic validation failed'
-            });
-            continue;
-          }
-
-          const completeQuestionData = {
-            examId: exam._id,
-            subjectId: subject._id,
-            trackId: track._id,
-            topicId: topicId,
-            year: questionData.year,
-            question: questionData.question,
-            questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
-            correctAnswer: questionData.correct_answer,
-            incorrectAnswers: questionData.incorrect_answers,
-            explanation: questionData.explanation || '',
-            difficulty: questionData.difficulty || 'medium',
-            orderIndex: questionData.orderIndex || index,
-            metadata: {
-              ...questionData.metadata,
-              createdVia: 'bulk_upload_manual_resolution'
-            }
-          };
-
-          const newQuestion = await this.createQuestion(completeQuestionData);
-          results.created.push({
-            id: newQuestion._id,
-            topic: newQuestion.topicId,
-            year: newQuestion.year,
-            trackUsed: track.name
-          });
-          
-          console.log(`✅ Successfully created question ${index + 1} via manual resolution`);
-        }
-        
-      } catch (error) {
-        console.error(`❌ Error creating question ${index + 1}:`, error.message);
-        results.errors.push({
-          index,
-          error: error.message
-        });
-      }
-    }
-    
-    console.log(`✅ Bulk question creation completed: ${results.created.length} created, ${results.errors.length} errors, ${results.duplicates.length} duplicates`);
-    return results;
-  } catch (error) {
-    console.error('❌ Error in createBulkQuestionsWithValidation:', error);
-    throw error;
-  }
-}
   // ========== EXISTING METHODS (Kept for compatibility and utility) ==========
 
   // Exam methods
@@ -1565,29 +1694,6 @@ async createBulkQuestionsWithValidation(questionsArray) {
     }
   }
 
-  async getQuestionsByFilters(filters) {
-    try {
-      const query = { isActive: true };
-      
-      if (filters.examId) query.examId = filters.examId;
-      if (filters.subjectId) query.subjectId = filters.subjectId;
-      if (filters.trackId) query.trackId = filters.trackId;
-      if (filters.topicId) query.topicId = filters.topicId;
-      if (filters.year) query.year = filters.year;
-      if (filters.difficulty) query.difficulty = filters.difficulty;
-      if (filters.topicIds && filters.topicIds.length > 0) {
-        query.topicId = { $in: filters.topicIds };
-      }
-
-      return await Question.find(query)
-        .populate(['examId', 'subjectId', 'trackId', 'topicId'])
-        .sort({ orderIndex: 1, _id: 1 });
-    } catch (error) {
-      console.error('Error getting questions by filters:', error);
-      throw error;
-    }
-  }
-
   // Complete structure methods with track-specific topic filtering
   async getCompleteUserFlow(examId) {
     try {
@@ -1625,7 +1731,7 @@ async createBulkQuestionsWithValidation(questionsArray) {
           if (subCategory.name === 'pastquestions' || subCategory.contentType === 'json') {
             trackData.subjectTopics = {};
             for (const subject of subjects) {
-              // Use the new method to get only topics with questions for this track
+              // Use the enhanced method to get ALL topics with questions for this track
               const topicsWithQuestions = await this.getTopicsWithQuestionsForTrack(
                 examId, subject._id, track._id
               );
@@ -1635,7 +1741,7 @@ async createBulkQuestionsWithValidation(questionsArray) {
             // For file-based content, get topics that have content for each track
             trackData.subjectContent = {};
             for (const subject of subjects) {
-              // Use the new method to get content grouped by track-specific topics
+              // Use the enhanced method to get content grouped by track-specific topics
               const contentGrouped = await this.getContentGroupedByTrackTopics(
                 examId, subject._id, track._id, subCategory._id
               );
@@ -1662,7 +1768,7 @@ async createBulkQuestionsWithValidation(questionsArray) {
     }
   }
 
-  // Utility methods (kept for internal use)
+  // Validation methods
   async validateExamExists(examId) {
     try {
       const exam = await Exam.findById(examId);
@@ -1729,6 +1835,52 @@ async createBulkQuestionsWithValidation(questionsArray) {
     } catch (error) {
       console.error('Error validating subject availability:', error);
       return false;
+    }
+  }
+
+  // Utility methods for content/question management
+  async getContentById(contentId) {
+    try {
+      return await Content.findById(contentId)
+        .populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId']);
+    } catch (error) {
+      console.error('Error getting content by id:', error);
+      throw error;
+    }
+  }
+
+  async updateContent(contentId, updateData) {
+    try {
+      return await Content.findByIdAndUpdate(
+        contentId,
+        updateData,
+        { new: true }
+      ).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId']);
+    } catch (error) {
+      console.error('Error updating content:', error);
+      throw error;
+    }
+  }
+
+  async deleteContent(contentId) {
+    try {
+      return await Content.findByIdAndUpdate(
+        contentId,
+        { isActive: false },
+        { new: true }
+      );
+    } catch (error) {
+      console.error('Error deleting content:', error);
+      throw error;
+    }
+  }
+
+  async getTopicById(topicId) {
+    try {
+      return await Topic.findById(topicId).populate(['examId', 'subjectId']);
+    } catch (error) {
+      console.error('Error getting topic by id:', error);
+      throw error;
     }
   }
 
@@ -1811,51 +1963,6 @@ async createBulkQuestionsWithValidation(questionsArray) {
       return results;
     } catch (error) {
       console.error('Error seeding complete exam:', error);
-      throw error;
-    }
-  }
-
-  async getContentById(contentId) {
-    try {
-      return await Content.findById(contentId)
-        .populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId']);
-    } catch (error) {
-      console.error('Error getting content by id:', error);
-      throw error;
-    }
-  }
-
-  async updateContent(contentId, updateData) {
-    try {
-      return await Content.findByIdAndUpdate(
-        contentId,
-        updateData,
-        { new: true }
-      ).populate(['examId', 'subjectId', 'trackId', 'subCategoryId', 'topicId']);
-    } catch (error) {
-      console.error('Error updating content:', error);
-      throw error;
-    }
-  }
-
-  async deleteContent(contentId) {
-    try {
-      return await Content.findByIdAndUpdate(
-        contentId,
-        { isActive: false },
-        { new: true }
-      );
-    } catch (error) {
-      console.error('Error deleting content:', error);
-      throw error;
-    }
-  }
-
-  async getTopicById(topicId) {
-    try {
-      return await Topic.findById(topicId).populate(['examId', 'subjectId']);
-    } catch (error) {
-      console.error('Error getting topic by id:', error);
       throw error;
     }
   }
