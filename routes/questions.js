@@ -6,7 +6,6 @@ const { ExamModel } = require('../models/exam');
 // Initialize the exam model
 const examModel = new ExamModel();
 
-
 /**
  * FIXED: Validate questions topics before upload with proper context
  * @route   POST /api/questions/validate-topics/:examName/:subjectName
@@ -77,6 +76,161 @@ router.post('/validate-topics/:examName/:subjectName', async (req, res) => {
   }
 });
 
+// ========== ENHANCED CONTEXT RESOLUTION HELPER ==========
+
+/**
+ * Enhanced context resolution with better error handling and track fallback
+ */
+async function resolveUploadContext(examName, subjectName, trackName, subCategoryName, trackType = null) {
+  try {
+    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    
+    console.log(`🔍 Resolving context: ${examName}/${subjectName}/${trackName}/${subCategoryName}`);
+    
+    // Resolve basic entities
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    
+    if (!exam || !subject || !subCategory) {
+      console.log(`❌ Basic context resolution failed:`, {
+        exam: exam?.name || 'Not found',
+        subject: subject?.name || 'Not found',
+        subCategory: subCategory?.name || 'Not found'
+      });
+      return { success: false, exam, subject, subCategory, track: null };
+    }
+    
+    // Enhanced track resolution with multiple fallback strategies
+    let track = null;
+    
+    // Strategy 1: Exact name match
+    track = await Track.findOne({ 
+      examId: exam._id, 
+      subCategoryId: subCategory._id, 
+      name: trackName, 
+      isActive: true 
+    });
+    
+    if (track) {
+      console.log(`✅ Found track by exact name: "${track.name}"`);
+    } else {
+      console.log(`⚠️ Track "${trackName}" not found by name, trying fallback strategies...`);
+      
+      // Strategy 2: If trackType provided, find by type
+      if (trackType) {
+        track = await Track.findOne({ 
+          examId: exam._id, 
+          subCategoryId: subCategory._id, 
+          trackType: trackType, 
+          isActive: true 
+        });
+        
+        if (track) {
+          console.log(`✅ Found track by type fallback: "${track.name}" (type: ${track.trackType})`);
+        }
+      }
+      
+      // Strategy 3: For past questions, try to find any years-type track
+      if (!track && subCategoryName.toLowerCase() === 'pastquestions') {
+        track = await Track.findOne({ 
+          examId: exam._id, 
+          subCategoryId: subCategory._id, 
+          trackType: 'years', 
+          isActive: true 
+        });
+        
+        if (track) {
+          console.log(`✅ Found track by past questions fallback: "${track.name}" (type: ${track.trackType})`);
+        }
+      }
+    }
+    
+    if (!track) {
+      // List available tracks for debugging
+      const availableTracks = await Track.find({ 
+        examId: exam._id, 
+        subCategoryId: subCategory._id, 
+        isActive: true 
+      }).select('name trackType');
+      
+      console.log(`❌ No track found. Available tracks:`, availableTracks.map(t => `${t.name} (${t.trackType})`));
+      
+      return { 
+        success: false, 
+        exam, 
+        subject, 
+        subCategory, 
+        track: null,
+        availableTracks: availableTracks.map(t => ({ name: t.name, type: t.trackType }))
+      };
+    }
+    
+    console.log(`✅ Context resolution successful using track: "${track.name}"`);
+    return { success: true, exam, subject, subCategory, track };
+    
+  } catch (error) {
+    console.error('❌ Error in context resolution:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Enhanced question enrichment with full context
+ */
+function enrichQuestionsWithContext(questions, contextData, timePeriodData, topicValidationResults) {
+  const { exam, subject, track, subCategory } = contextData;
+  const { timePeriod, periodValue, periodLabel } = timePeriodData;
+  
+  return questions.map((question, index) => {
+    const validationData = topicValidationResults.validQuestions[index];
+    
+    return {
+      // Original structure
+      examName: exam.name,
+      subject: subject.name,
+      year: question.year || periodValue,
+      topic: question.topic,
+      question: question.question,
+      question_diagram: question.question_diagram || 'assets/images/noDiagram.png',
+      correct_answer: question.correct_answer,
+      incorrect_answers: question.incorrect_answers,
+      explanation: question.explanation || '',
+      difficulty: question.difficulty || 'medium',
+      
+      // Enhanced metadata
+      metadata: {
+        ...question.metadata,
+        [timePeriod]: periodValue,
+        timePeriod: timePeriod,
+        [`${timePeriod}Label`]: periodLabel,
+        orderIndex: index,
+        topicValidated: true,
+        topicId: validationData.topicId,
+        trackUsed: track.name,
+        trackType: track.trackType,
+        uploadContext: {
+          trackName: track.name,
+          trackType: track.trackType,
+          [timePeriod]: periodValue
+        }
+      },
+      
+      // Pre-validation data for the model
+      _preValidated: {
+        topicId: validationData.topicId,
+        topicName: validationData.topicName,
+        contextResolved: {
+          exam: { id: exam._id, name: exam.name },
+          subject: { id: subject._id, name: subject.name },
+          track: { id: track._id, name: track.name, type: track.trackType },
+          subCategory: { id: subCategory._id, name: subCategory.name }
+        }
+      }
+    };
+  });
+}
+
 // ========== TIME-PERIOD SPECIFIC QUESTION UPLOAD ROUTES (Enhanced with Topic Validation) ==========
 
 /**
@@ -100,17 +254,25 @@ router.post('/years/:examName/:subjectName/:trackName/:subCategoryName/:year', a
       return res.status(400).json({ message: 'Valid year (1900-2100) is required' });
     }
 
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    // Enhanced context resolution
+    const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName, 'years');
     
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
-      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    if (!contextResult.success) {
+      return res.status(404).json({ 
+        message: 'Context resolution failed - check exam, subject, track, or subcategory names',
+        debug: {
+          exam: contextResult.exam?.name || 'Not found',
+          subject: contextResult.subject?.name || 'Not found', 
+          subCategory: contextResult.subCategory?.name || 'Not found',
+          track: 'Not found',
+          requestedTrackName: trackName,
+          availableTracks: contextResult.availableTracks || [],
+          error: contextResult.error
+        }
+      });
     }
+
+    const { exam, subject, track, subCategory } = contextResult;
 
     // ENHANCED: Validate all topics before processing
     console.log(`🔍 Validating topics for ${questions.length} questions for year ${year}...`);
@@ -134,38 +296,19 @@ router.post('/years/:examName/:subjectName/:trackName/:subCategoryName/:year', a
       });
     }
 
-    // Enhanced: Add year-specific metadata with validated topics
-    const enrichedQuestions = questions.map((question, index) => {
-      const validationData = topicValidationResults.validQuestions[index];
-      
-      return {
-        examName: exam.name,
-        subject: subject.name,
-        year: year,
-        topic: question.topic,
-        question: question.question,
-        question_diagram: question.question_diagram || 'assets/images/noDiagram.png',
-        correct_answer: question.correct_answer,
-        incorrect_answers: question.incorrect_answers,
-        explanation: question.explanation || '',
-        difficulty: question.difficulty || 'medium',
-        metadata: {
-          ...question.metadata,
-          uploadYear: year,
-          timePeriod: 'year',
-          yearLabel: `Year ${year}`,
-          orderIndex: index,
-          topicValidated: true,
-          topicId: validationData.topicId
-        },
-        _preValidated: {
-          topicId: validationData.topicId,
-          topicName: validationData.topicName
-        }
-      };
-    });
+    // Enhanced question enrichment
+    const enrichedQuestions = enrichQuestionsWithContext(
+      questions,
+      { exam, subject, track, subCategory },
+      { timePeriod: 'uploadYear', periodValue: year, periodLabel: `Year ${year}` },
+      topicValidationResults
+    );
 
+    console.log(`🚀 Uploading ${enrichedQuestions.length} validated questions to database using track "${track.name}"...`);
+    
     const results = await examModel.createBulkQuestionsWithValidation(enrichedQuestions);
+    
+    console.log(`✅ Upload completed: ${results.created.length} created, ${results.errors.length} errors`);
     
     res.status(201).json({
       message: `Successfully uploaded ${results.created.length} questions for Year ${year} with validated topics`,
@@ -173,6 +316,8 @@ router.post('/years/:examName/:subjectName/:trackName/:subCategoryName/:year', a
         exam: exam.displayName,
         subject: subject.displayName,
         track: track.displayName,
+        trackName: track.name,
+        trackType: track.trackType,
         subCategory: subCategory.displayName,
         year: year
       },
@@ -184,6 +329,7 @@ router.post('/years/:examName/:subjectName/:trackName/:subCategoryName/:year', a
       }
     });
   } catch (error) {
+    console.error('❌ Error in years upload route:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -208,17 +354,24 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
       return res.status(400).json({ message: 'Valid week number (1 or greater) is required' });
     }
 
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    // Enhanced context resolution
+    const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName, 'weeks');
     
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
-      return res.status(404).json({ message: 'Context not found' });
+    if (!contextResult.success) {
+      return res.status(404).json({ 
+        message: 'Context resolution failed',
+        debug: {
+          exam: contextResult.exam?.name || 'Not found',
+          subject: contextResult.subject?.name || 'Not found', 
+          subCategory: contextResult.subCategory?.name || 'Not found',
+          track: 'Not found',
+          requestedTrackName: trackName,
+          availableTracks: contextResult.availableTracks || []
+        }
+      });
     }
+
+    const { exam, subject, track, subCategory } = contextResult;
 
     if (track.trackType !== 'weeks') {
       return res.status(400).json({ 
@@ -246,37 +399,16 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
       });
     }
 
-    // Add week-specific metadata with validated topics
-    const enrichedQuestions = questions.map((question, index) => {
-      const validationData = topicValidationResults.validQuestions[index];
-      
-      return {
-        examName: exam.name,
-        subject: subject.name,
-        year: question.year,
-        topic: question.topic,
-        question: question.question,
-        question_diagram: question.question_diagram || 'assets/images/noDiagram.png',
-        correct_answer: question.correct_answer,
-        incorrect_answers: question.incorrect_answers,
-        explanation: question.explanation || '',
-        difficulty: question.difficulty || 'medium',
-        metadata: {
-          ...question.metadata,
-          week: week,
-          timePeriod: 'week',
-          weekLabel: `Week ${week}`,
-          orderIndex: (week * 1000) + index,
-          topicValidated: true,
-          topicId: validationData.topicId
-        },
-        _preValidated: {
-          topicId: validationData.topicId,
-          topicName: validationData.topicName
-        }
-      };
-    });
+    // Enhanced question enrichment
+    const enrichedQuestions = enrichQuestionsWithContext(
+      questions,
+      { exam, subject, track, subCategory },
+      { timePeriod: 'week', periodValue: week, periodLabel: `Week ${week}` },
+      topicValidationResults
+    );
 
+    console.log(`🚀 Uploading ${enrichedQuestions.length} validated questions for Week ${week}...`);
+    
     const results = await examModel.createBulkQuestionsWithValidation(enrichedQuestions);
     
     res.status(201).json({
@@ -292,6 +424,7 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
       results
     });
   } catch (error) {
+    console.error('❌ Error in weeks upload route:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -316,17 +449,24 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
       return res.status(400).json({ message: 'Valid day number (1 or greater) is required' });
     }
 
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    // Enhanced context resolution
+    const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName, 'days');
     
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
-      return res.status(404).json({ message: 'Context not found' });
+    if (!contextResult.success) {
+      return res.status(404).json({ 
+        message: 'Context resolution failed',
+        debug: {
+          exam: contextResult.exam?.name || 'Not found',
+          subject: contextResult.subject?.name || 'Not found', 
+          subCategory: contextResult.subCategory?.name || 'Not found',
+          track: 'Not found',
+          requestedTrackName: trackName,
+          availableTracks: contextResult.availableTracks || []
+        }
+      });
     }
+
+    const { exam, subject, track, subCategory } = contextResult;
 
     if (track.trackType !== 'days') {
       return res.status(400).json({ 
@@ -347,37 +487,16 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
       });
     }
 
-    // Add day-specific metadata with validated topics
-    const enrichedQuestions = questions.map((question, index) => {
-      const validationData = topicValidationResults.validQuestions[index];
-      
-      return {
-        examName: exam.name,
-        subject: subject.name,
-        year: question.year,
-        topic: question.topic,
-        question: question.question,
-        question_diagram: question.question_diagram || 'assets/images/noDiagram.png',
-        correct_answer: question.correct_answer,
-        incorrect_answers: question.incorrect_answers,
-        explanation: question.explanation || '',
-        difficulty: question.difficulty || 'medium',
-        metadata: {
-          ...question.metadata,
-          day: day,
-          timePeriod: 'day',
-          dayLabel: `Day ${day}`,
-          orderIndex: (day * 100) + index,
-          topicValidated: true,
-          topicId: validationData.topicId
-        },
-        _preValidated: {
-          topicId: validationData.topicId,
-          topicName: validationData.topicName
-        }
-      };
-    });
+    // Enhanced question enrichment
+    const enrichedQuestions = enrichQuestionsWithContext(
+      questions,
+      { exam, subject, track, subCategory },
+      { timePeriod: 'day', periodValue: day, periodLabel: `Day ${day}` },
+      topicValidationResults
+    );
 
+    console.log(`🚀 Uploading ${enrichedQuestions.length} validated questions for Day ${day}...`);
+    
     const results = await examModel.createBulkQuestionsWithValidation(enrichedQuestions);
     
     res.status(201).json({
@@ -393,6 +512,7 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
       results
     });
   } catch (error) {
+    console.error('❌ Error in days upload route:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -415,17 +535,24 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
     const originalSemesterNumber = semesterNumber;
     const numericSemester = parseInt(semesterNumber) || 1;
 
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    // Enhanced context resolution
+    const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName, 'semester');
     
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
-      return res.status(404).json({ message: 'Context not found' });
+    if (!contextResult.success) {
+      return res.status(404).json({ 
+        message: 'Context resolution failed',
+        debug: {
+          exam: contextResult.exam?.name || 'Not found',
+          subject: contextResult.subject?.name || 'Not found', 
+          subCategory: contextResult.subCategory?.name || 'Not found',
+          track: 'Not found',
+          requestedTrackName: trackName,
+          availableTracks: contextResult.availableTracks || []
+        }
+      });
     }
+
+    const { exam, subject, track, subCategory } = contextResult;
 
     if (track.trackType !== 'semester') {
       return res.status(400).json({ 
@@ -460,39 +587,23 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
       });
     });
 
-    // Add semester-specific metadata with topic organization and validation
-    const enrichedQuestions = questions.map((question, index) => {
-      const validationData = topicValidationResults.validQuestions[index];
-      
-      return {
-        examName: exam.name,
-        subject: subject.name,
-        year: question.year,
-        topic: question.topic,
-        question: question.question,
-        question_diagram: question.question_diagram || 'assets/images/noDiagram.png',
-        correct_answer: question.correct_answer,
-        incorrect_answers: question.incorrect_answers,
-        explanation: question.explanation || '',
-        difficulty: question.difficulty || 'medium',
-        metadata: {
-          ...question.metadata,
-          semester: numericSemester,
-          semesterName: originalSemesterNumber,
-          timePeriod: 'semester',
-          semesterLabel: `${originalSemesterNumber}`,
-          topicAccess: true,
-          orderIndex: (numericSemester * 100000) + index,
-          topicValidated: true,
-          topicId: validationData.topicId
-        },
-        _preValidated: {
-          topicId: validationData.topicId,
-          topicName: validationData.topicName
-        }
-      };
+    // Enhanced question enrichment
+    const enrichedQuestions = enrichQuestionsWithContext(
+      questions,
+      { exam, subject, track, subCategory },
+      { timePeriod: 'semester', periodValue: numericSemester, periodLabel: originalSemesterNumber },
+      topicValidationResults
+    );
+
+    // Add additional semester-specific metadata
+    enrichedQuestions.forEach((question, index) => {
+      question.metadata.semesterName = originalSemesterNumber;
+      question.metadata.topicAccess = true;
+      question.metadata.orderIndex = (numericSemester * 100000) + index;
     });
 
+    console.log(`🚀 Uploading ${enrichedQuestions.length} validated questions for ${originalSemesterNumber}...`);
+    
     const results = await examModel.createBulkQuestionsWithValidation(enrichedQuestions);
     
     res.status(201).json({
@@ -514,6 +625,7 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
       results
     });
   } catch (error) {
+    console.error('❌ Error in semesters upload route:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -608,17 +720,14 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
     const { examName, subjectName, trackName, subCategoryName } = req.params;
     const { groupBy = 'year' } = req.query;
 
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    // Resolve context using the enhanced resolver
+    const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName);
     
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
+    if (!contextResult.success) {
       return res.status(404).json({ message: 'Context not found' });
     }
+
+    const { exam, subject, track, subCategory } = contextResult;
 
     // Get questions for this context
     const questions = await examModel.getQuestionsByFilters({
@@ -767,19 +876,26 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
   try {
     const { examName, subjectName, trackName, subCategoryName } = req.params;
     
-    // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    // Resolve context using the enhanced resolver
+    const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName);
     
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!track) {
-      return res.status(404).json({ message: 'Track not found' });
+    if (!contextResult.success) {
+      return res.status(404).json({ 
+        message: 'Context not found',
+        debug: {
+          exam: contextResult.exam?.name || 'Not found',
+          subject: contextResult.subject?.name || 'Not found', 
+          subCategory: contextResult.subCategory?.name || 'Not found',
+          track: 'Not found',
+          requestedTrackName: trackName,
+          availableTracks: contextResult.availableTracks || []
+        }
+      });
     }
 
-    // NEW: Get approved topics for this exam-subject for validation reference
+    const { exam, subject, track, subCategory } = contextResult;
+
+    // Get approved topics for this exam-subject for validation reference
     const approvedTopics = await examModel.getApprovedTopicsForSubject(exam._id, subject._id);
 
     const periods = [];
@@ -841,13 +957,19 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
       totalPeriods: periods.length,
       periods,
       groupingEndpoint: `/api/questions/groups/${examName}/${subjectName}/${trackName}/${subCategoryName}`,
-      topicValidationEndpoint: `/api/questions/validate-topics`
+      topicValidationEndpoint: `/api/questions/validate-topics/${examName}/${subjectName}`
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
+/**
+ * UPDATE: Question update with topic validation
+ * @route   PUT /api/questions/:questionId
+ * @desc    Update a question with topic validation
+ * @access  Private
+ */
 router.put('/:questionId', async (req, res) => {
   try {
     const updates = req.body;
@@ -889,6 +1011,87 @@ router.put('/:questionId', async (req, res) => {
   }
 });
 
+/**
+ * NEW: Get questions by specific criteria
+ * @route   GET /api/questions/search/:examName/:subjectName
+ * @desc    Search questions with various filters
+ * @access  Public
+ */
+router.get('/search/:examName/:subjectName', async (req, res) => {
+  try {
+    const { examName, subjectName } = req.params;
+    const { 
+      year, 
+      topic, 
+      difficulty, 
+      limit = 50, 
+      offset = 0,
+      trackName,
+      subCategoryName 
+    } = req.query;
 
+    // Resolve basic context
+    const { Exam, Subject } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
+
+    if (!exam || !subject) {
+      return res.status(404).json({ message: 'Exam or Subject not found' });
+    }
+
+    // Build filters
+    const filters = {
+      examId: exam._id,
+      subjectId: subject._id
+    };
+
+    if (year) filters.year = year;
+    if (difficulty) filters.difficulty = difficulty;
+    
+    // If topic is provided, validate and add to filters
+    if (topic) {
+      const topicValidation = await examModel.validateTopicForContent(exam._id, subject._id, topic);
+      if (topicValidation.isValid) {
+        filters.topicId = topicValidation.topicId;
+      }
+    }
+
+    // If track context is provided, resolve and add
+    if (trackName && subCategoryName) {
+      const contextResult = await resolveUploadContext(examName, subjectName, trackName, subCategoryName);
+      if (contextResult.success) {
+        filters.trackId = contextResult.track._id;
+      }
+    }
+
+    // Get questions with pagination
+    const questions = await examModel.getQuestionsByFilters(filters);
+    
+    // Apply pagination
+    const paginatedQuestions = questions.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+
+    res.json({
+      questions: paginatedQuestions,
+      pagination: {
+        total: questions.length,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        hasMore: questions.length > parseInt(offset) + parseInt(limit)
+      },
+      filters: {
+        exam: exam.displayName,
+        subject: subject.displayName,
+        year,
+        topic,
+        difficulty,
+        trackName,
+        subCategoryName
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 module.exports = router;

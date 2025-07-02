@@ -826,144 +826,190 @@ class ExamModel {
   /**
    * NEW: Enhanced question creation with mandatory topic validation
    */
-  async createBulkQuestionsWithValidation(questionsArray) {
-    try {
-      const results = { created: [], errors: [], duplicates: [] };
-      
-      for (const [index, questionData] of questionsArray.entries()) {
-        try {
-          // Check if question was pre-validated (from route validation)
-          if (questionData._preValidated) {
-            // Use pre-validated topic ID
-            const topicId = questionData._preValidated.topicId;
-            
-            // Resolve context
-            const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
-            const subject = await Subject.findOne({ 
-              examId: exam?._id, 
-              name: questionData.subject 
+async createBulkQuestionsWithValidation(questionsArray) {
+  try {
+    const results = { created: [], errors: [], duplicates: [] };
+    
+    console.log(`🚀 Processing ${questionsArray.length} questions for bulk creation...`);
+    
+    for (const [index, questionData] of questionsArray.entries()) {
+      try {
+        // Check if question was pre-validated (from route validation)
+        if (questionData._preValidated && questionData._preValidated.contextResolved) {
+          // Use pre-validated context and topic data
+          const { contextResolved } = questionData._preValidated;
+          const topicId = questionData._preValidated.topicId;
+          
+          console.log(`📝 Processing question ${index + 1}: Using pre-validated context`);
+          
+          if (!contextResolved.exam?.id || !contextResolved.subject?.id || !contextResolved.track?.id || !topicId) {
+            console.error(`❌ Missing required context data for question ${index}:`, {
+              exam: contextResolved.exam?.id ? 'Present' : 'Missing',
+              subject: contextResolved.subject?.id ? 'Present' : 'Missing',
+              track: contextResolved.track?.id ? 'Present' : 'Missing',
+              topicId: topicId ? 'Present' : 'Missing'
             });
             
-            const pastQuestionsSubCategory = await SubCategory.findOne({
-              examId: exam?._id,
-              name: 'pastquestions'
+            results.errors.push({
+              index,
+              error: 'Incomplete pre-validated context data'
             });
-            
-            const track = await Track.findOne({ 
+            continue;
+          }
+
+          const completeQuestionData = {
+            examId: contextResolved.exam.id,
+            subjectId: contextResolved.subject.id,
+            trackId: contextResolved.track.id,
+            topicId: topicId,
+            year: questionData.year,
+            question: questionData.question,
+            questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+            correctAnswer: questionData.correct_answer,
+            incorrectAnswers: questionData.incorrect_answers,
+            explanation: questionData.explanation || '',
+            difficulty: questionData.difficulty || 'medium',
+            orderIndex: questionData.metadata?.orderIndex || index,
+            metadata: {
+              ...questionData.metadata,
+              createdVia: 'bulk_upload_pre_validated'
+            }
+          };
+
+          const newQuestion = await this.createQuestion(completeQuestionData);
+          results.created.push({
+            id: newQuestion._id,
+            topic: newQuestion.topicId,
+            year: newQuestion.year,
+            trackUsed: contextResolved.track.name
+          });
+          
+          console.log(`✅ Successfully created question ${index + 1}`);
+          
+        } else {
+          // Fallback: Manual context resolution for non-pre-validated questions
+          console.log(`📝 Processing question ${index + 1}: Manual context resolution`);
+          
+          const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
+          const subject = await Subject.findOne({ 
+            examId: exam?._id, 
+            name: questionData.subject 
+          });
+          
+          const pastQuestionsSubCategory = await SubCategory.findOne({
+            examId: exam?._id,
+            name: 'pastquestions'
+          });
+          
+          // Enhanced track resolution with multiple fallback strategies
+          let track = null;
+          
+          // Strategy 1: Use trackName if provided
+          if (questionData.trackName) {
+            track = await Track.findOne({ 
               examId: exam?._id, 
               subCategoryId: pastQuestionsSubCategory?._id,
-              name: questionData.year
-            });
-
-            if (!exam || !subject || !track || !topicId) {
-              results.errors.push({
-                index,
-                error: 'Context resolution failed'
-              });
-              continue;
-            }
-
-            const completeQuestionData = {
-              examId: exam._id,
-              subjectId: subject._id,
-              trackId: track._id,
-              topicId: topicId,
-              year: questionData.year,
-              question: questionData.question,
-              questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
-              correctAnswer: questionData.correct_answer,
-              incorrectAnswers: questionData.incorrect_answers,
-              explanation: questionData.explanation || '',
-              difficulty: questionData.difficulty || 'medium',
-              orderIndex: questionData.orderIndex || 0,
-              metadata: questionData.metadata || {}
-            };
-
-            const newQuestion = await this.createQuestion(completeQuestionData);
-            results.created.push({
-              id: newQuestion._id,
-              topic: newQuestion.topicId
-            });
-          } else {
-            // Fallback to original validation logic
-            const exam = await Exam.findOne({ name: questionData.examName?.toUpperCase() });
-            const subject = await Subject.findOne({ 
-              examId: exam?._id, 
-              name: questionData.subject 
-            });
-            
-            const pastQuestionsSubCategory = await SubCategory.findOne({
-              examId: exam?._id,
-              name: 'pastquestions'
-            });
-            
-            const track = await Track.findOne({ 
-              examId: exam?._id, 
-              subCategoryId: pastQuestionsSubCategory?._id,
-              name: questionData.year
-            });
-            
-            // Validate topic
-            let topicId = null;
-            if (questionData.topic) {
-              const topicValidation = await this.validateTopicForContent(
-                exam?._id,
-                subject?._id,
-                questionData.topic
-              );
-              
-              if (!topicValidation.isValid) {
-                throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
-              }
-              topicId = topicValidation.topicId;
-            }
-
-            if (!exam || !subject || !track || !topicId) {
-              results.errors.push({
-                index,
-                error: 'Context or topic validation failed'
-              });
-              continue;
-            }
-
-            const completeQuestionData = {
-              examId: exam._id,
-              subjectId: subject._id,
-              trackId: track._id,
-              topicId: topicId,
-              year: questionData.year,
-              question: questionData.question,
-              questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
-              correctAnswer: questionData.correct_answer,
-              incorrectAnswers: questionData.incorrect_answers,
-              explanation: questionData.explanation || '',
-              difficulty: questionData.difficulty || 'medium',
-              orderIndex: questionData.orderIndex || 0,
-              metadata: questionData.metadata || {}
-            };
-
-            const newQuestion = await this.createQuestion(completeQuestionData);
-            results.created.push({
-              id: newQuestion._id,
-              topic: newQuestion.topicId
+              name: questionData.trackName,
+              isActive: true
             });
           }
           
-        } catch (error) {
-          results.errors.push({
-            index,
-            error: error.message
-          });
-        }
-      }
-      
-      return results;
-    } catch (error) {
-      console.error('Error creating bulk questions with validation:', error);
-      throw error;
-    }
-  }
+          // Strategy 2: Find by year match (legacy support)
+          if (!track && questionData.year) {
+            track = await Track.findOne({ 
+              examId: exam?._id, 
+              subCategoryId: pastQuestionsSubCategory?._id,
+              name: questionData.year,
+              isActive: true
+            });
+          }
+          
+          // Strategy 3: Find any years-type track
+          if (!track) {
+            track = await Track.findOne({ 
+              examId: exam?._id, 
+              subCategoryId: pastQuestionsSubCategory?._id,
+              trackType: 'years',
+              isActive: true
+            });
+          }
+          
+          // Validate topic
+          let topicId = null;
+          if (questionData.topic) {
+            const topicValidation = await this.validateTopicForContent(
+              exam?._id,
+              subject?._id,
+              questionData.topic
+            );
+            
+            if (!topicValidation.isValid) {
+              throw new Error(`Invalid topic "${questionData.topic}": ${topicValidation.message}`);
+            }
+            topicId = topicValidation.topicId;
+          }
 
+          if (!exam || !subject || !track || !topicId) {
+            console.error(`❌ Manual context resolution failed for question ${index}:`, {
+              exam: exam?.name || 'Not found',
+              subject: subject?.name || 'Not found',
+              track: track?.name || 'Not found',
+              topicId: topicId ? 'Found' : 'Not found'
+            });
+            
+            results.errors.push({
+              index,
+              error: 'Manual context or topic validation failed'
+            });
+            continue;
+          }
+
+          const completeQuestionData = {
+            examId: exam._id,
+            subjectId: subject._id,
+            trackId: track._id,
+            topicId: topicId,
+            year: questionData.year,
+            question: questionData.question,
+            questionDiagram: questionData.question_diagram || 'assets/images/noDiagram.png',
+            correctAnswer: questionData.correct_answer,
+            incorrectAnswers: questionData.incorrect_answers,
+            explanation: questionData.explanation || '',
+            difficulty: questionData.difficulty || 'medium',
+            orderIndex: questionData.orderIndex || index,
+            metadata: {
+              ...questionData.metadata,
+              createdVia: 'bulk_upload_manual_resolution'
+            }
+          };
+
+          const newQuestion = await this.createQuestion(completeQuestionData);
+          results.created.push({
+            id: newQuestion._id,
+            topic: newQuestion.topicId,
+            year: newQuestion.year,
+            trackUsed: track.name
+          });
+          
+          console.log(`✅ Successfully created question ${index + 1} via manual resolution`);
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error creating question ${index + 1}:`, error.message);
+        results.errors.push({
+          index,
+          error: error.message
+        });
+      }
+    }
+    
+    console.log(`✅ Bulk question creation completed: ${results.created.length} created, ${results.errors.length} errors, ${results.duplicates.length} duplicates`);
+    return results;
+  } catch (error) {
+    console.error('❌ Error in createBulkQuestionsWithValidation:', error);
+    throw error;
+  }
+}
   // ========== EXISTING METHODS (Kept for compatibility and utility) ==========
 
   // Exam methods
