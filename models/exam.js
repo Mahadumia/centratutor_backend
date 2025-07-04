@@ -1,4 +1,4 @@
-// models/exam.js - UPDATED: Enhanced bulk question methods with better duplicate handling
+// models/exam.js - UPDATED: Enhanced with TopicAssignment schema for weeks/days/semesters topic management
 const mongoose = require('mongoose');
 
 // Exam Schema - Main exam categories like JUPEB, WAEC, etc.
@@ -113,6 +113,61 @@ const topicSchema = new mongoose.Schema({
       enum: ['beginner', 'intermediate', 'advanced', 'all'],
       default: 'all'
     }
+  }
+}, { timestamps: true });
+
+// NEW: TopicAssignment Schema - For weeks/days/semesters topic assignments
+const topicAssignmentSchema = new mongoose.Schema({
+  examId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Exam',
+    required: true,
+    index: true
+  },
+  subjectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subject',
+    required: true,
+    index: true
+  },
+  trackId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Track',
+    required: true,
+    index: true
+  },
+  subCategoryId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SubCategory',
+    required: true,
+    index: true
+  },
+  topicId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Topic',
+    required: true,
+    index: true
+  },
+  timePeriod: {
+    type: String,
+    enum: ['week', 'day', 'semester'],
+    required: true,
+    index: true
+  },
+  periodValue: {
+    type: Number,
+    required: true,
+    min: 1,
+    index: true
+  },
+  orderIndex: {
+    type: Number,
+    required: true,
+    default: 0
+  },
+  isActive: {
+    type: Boolean,
+    default: true
   }
 }, { timestamps: true });
 
@@ -381,6 +436,7 @@ const questionSchema = new mongoose.Schema({
 // Enhanced indexes
 subjectSchema.index({ examId: 1, name: 1 }, { unique: true });
 topicSchema.index({ examId: 1, subjectId: 1, name: 1 }, { unique: true });
+topicAssignmentSchema.index({ examId: 1, subjectId: 1, trackId: 1, subCategoryId: 1, timePeriod: 1, periodValue: 1, topicId: 1 }, { unique: true });
 trackSchema.index({ examId: 1, subCategoryId: 1, name: 1 }, { unique: true });
 subjectAvailabilitySchema.index({ examId: 1, subjectId: 1, subCategoryId: 1 }, { unique: true });
 contentSchema.index({ examId: 1, subjectId: 1, trackId: 1, subCategoryId: 1, topicId: 1, name: 1 }, { unique: true });
@@ -391,6 +447,7 @@ subCategorySchema.index({ examId: 1, name: 1 }, { unique: true });
 const Exam = mongoose.model('Exam', examSchema);
 const Subject = mongoose.model('Subject', subjectSchema);
 const Topic = mongoose.model('Topic', topicSchema);
+const TopicAssignment = mongoose.model('TopicAssignment', topicAssignmentSchema);
 const Track = mongoose.model('Track', trackSchema);
 const SubCategory = mongoose.model('SubCategory', subCategorySchema);
 const SubjectAvailability = mongoose.model('SubjectAvailability', subjectAvailabilitySchema);
@@ -398,7 +455,262 @@ const Content = mongoose.model('Content', contentSchema);
 const Question = mongoose.model('Question', questionSchema);
 
 class ExamModel {
-  // ========== ENHANCED BULK QUESTION CREATION METHODS ==========
+  // ========== NEW: TOPIC ASSIGNMENT METHODS FOR WEEKS/DAYS/SEMESTERS ==========
+  
+  /**
+   * Create topic assignments for a specific time period
+   */
+  async createTopicAssignments(contextData, timePeriod, periodValue, topics) {
+    try {
+      const { exam, subject, track, subCategory } = contextData;
+      const results = { created: [], errors: [], duplicates: [] };
+      
+      // Validate all topics first
+      const topicValidationResults = await this.validateTopicsForContext(topics, exam._id, subject._id);
+      
+      if (topicValidationResults.invalidTopics.length > 0) {
+        throw new Error(`Invalid topics found: ${topicValidationResults.invalidTopics.map(t => t.topicName).join(', ')}`);
+      }
+      
+      // Delete existing assignments for this period
+      await TopicAssignment.updateMany(
+        {
+          examId: exam._id,
+          subjectId: subject._id,
+          trackId: track._id,
+          subCategoryId: subCategory._id,
+          timePeriod,
+          periodValue
+        },
+        { isActive: false }
+      );
+      
+      // Create new assignments
+      for (const [index, validatedTopic] of topicValidationResults.validTopics.entries()) {
+        try {
+          const assignment = new TopicAssignment({
+            examId: exam._id,
+            subjectId: subject._id,
+            trackId: track._id,
+            subCategoryId: subCategory._id,
+            topicId: validatedTopic.topicId,
+            timePeriod,
+            periodValue,
+            orderIndex: index,
+            isActive: true
+          });
+          
+          await assignment.save();
+          results.created.push({
+            id: assignment._id,
+            topicName: validatedTopic.topicName,
+            orderIndex: index
+          });
+          
+        } catch (error) {
+          if (error.code === 11000) {
+            results.duplicates.push({
+              topicName: validatedTopic.topicName,
+              reason: 'Topic already assigned to this period'
+            });
+          } else {
+            results.errors.push({
+              topicName: validatedTopic.topicName,
+              error: error.message
+            });
+          }
+        }
+      }
+      
+      return results;
+    } catch (error) {
+      console.error('Error creating topic assignments:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Get topic assignments for a specific time period
+   */
+  async getTopicAssignments(examId, subjectId, trackId, subCategoryId, timePeriod, periodValue) {
+    try {
+      return await TopicAssignment.find({
+        examId,
+        subjectId,
+        trackId,
+        subCategoryId,
+        timePeriod,
+        periodValue,
+        isActive: true
+      })
+      .populate('topicId')
+      .sort({ orderIndex: 1 });
+    } catch (error) {
+      console.error('Error getting topic assignments:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Check if topic assignments exist for a specific time period
+   */
+  async checkExistingTopicAssignments(examId, subjectId, trackId, subCategoryId, timePeriod, periodValue) {
+    try {
+      const existingAssignments = await TopicAssignment.find({
+        examId,
+        subjectId,
+        trackId,
+        subCategoryId,
+        timePeriod,
+        periodValue,
+        isActive: true
+      });
+      
+      return {
+        exists: existingAssignments.length > 0,
+        count: existingAssignments.length,
+        assignments: existingAssignments
+      };
+    } catch (error) {
+      console.error('Error checking existing topic assignments:', error);
+      return { exists: false, count: 0, assignments: [] };
+    }
+  }
+  
+  /**
+   * Validate multiple topics for context
+   */
+  async validateTopicsForContext(topics, examId, subjectId) {
+    try {
+      const validationResults = {
+        validTopics: [],
+        invalidTopics: [],
+        summary: {
+          total: topics.length,
+          valid: 0,
+          invalid: 0
+        }
+      };
+
+      // Get approved topics for this exam-subject
+      const approvedTopics = await this.getApprovedTopicsForSubject(examId, subjectId);
+      const approvedTopicNames = new Set(approvedTopics.map(topic => topic.name.trim().toLowerCase()));
+
+      // Validate each topic
+      for (const [index, topicName] of topics.entries()) {
+        if (!topicName || typeof topicName !== 'string') {
+          validationResults.invalidTopics.push({
+            index,
+            topicName: topicName,
+            error: 'Topic name must be a non-empty string'
+          });
+          continue;
+        }
+
+        const normalizedTopicName = topicName.trim().toLowerCase();
+
+        if (approvedTopicNames.has(normalizedTopicName)) {
+          // Find the actual topic object
+          const approvedTopic = approvedTopics.find(topic => 
+            topic.name.trim().toLowerCase() === normalizedTopicName
+          );
+
+          validationResults.validTopics.push({
+            index,
+            topicName: topicName.trim(),
+            topicId: approvedTopic._id,
+            displayName: approvedTopic.displayName
+          });
+        } else {
+          validationResults.invalidTopics.push({
+            index,
+            topicName: topicName,
+            error: `Topic "${topicName}" is not in the approved list for this exam-subject`
+          });
+        }
+      }
+
+      validationResults.summary.valid = validationResults.validTopics.length;
+      validationResults.summary.invalid = validationResults.invalidTopics.length;
+
+      return validationResults;
+    } catch (error) {
+      console.error('Error validating topics for context:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Get questions for a topic across all years (for weeks/days/semesters)
+   */
+  async getQuestionsForTopicAcrossYears(examId, subjectId, topicId, trackId = null) {
+    try {
+      const query = {
+        examId,
+        subjectId,
+        topicId,
+        isActive: true
+      };
+      
+      // If trackId provided, use it; otherwise get from any track
+      if (trackId) {
+        query.trackId = trackId;
+      }
+      
+      const questions = await Question.find(query)
+        .populate(['examId', 'subjectId', 'trackId', 'topicId'])
+        .sort({ year: -1, _id: 1 }); // Year DESC, then by ID for consistency
+      
+      // Group by year and randomize within each year
+      const questionsByYear = {};
+      questions.forEach(question => {
+        const year = question.year;
+        if (!questionsByYear[year]) {
+          questionsByYear[year] = [];
+        }
+        questionsByYear[year].push(question);
+      });
+      
+      // Randomize questions within each year group
+      Object.keys(questionsByYear).forEach(year => {
+        questionsByYear[year] = this.shuffleArray(questionsByYear[year]);
+      });
+      
+      // Flatten back to array maintaining year order (newest first)
+      const sortedYears = Object.keys(questionsByYear).sort((a, b) => parseInt(b) - parseInt(a));
+      const finalQuestions = [];
+      
+      sortedYears.forEach(year => {
+        finalQuestions.push(...questionsByYear[year]);
+      });
+      
+      return {
+        totalQuestions: finalQuestions.length,
+        yearBreakdown: Object.keys(questionsByYear).map(year => ({
+          year,
+          count: questionsByYear[year].length
+        })).sort((a, b) => parseInt(b.year) - parseInt(a.year)),
+        questions: finalQuestions
+      };
+    } catch (error) {
+      console.error('Error getting questions for topic across years:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Utility method to shuffle array
+   */
+  shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  // ========== ENHANCED BULK QUESTION CREATION METHODS (UNCHANGED) ==========
   
   /**
    * ENHANCED: Create bulk questions with better validation and duplicate handling
@@ -1973,6 +2285,7 @@ module.exports = {
   Exam,
   Subject,
   Topic,
+  TopicAssignment,
   Track,
   SubCategory,
   SubjectAvailability,
