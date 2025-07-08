@@ -732,6 +732,7 @@ router.put('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semes
 });
 
 
+
 // ========== DELETE ROUTES FOR ENTIRE PERIODS ==========
 
 /**
@@ -863,7 +864,6 @@ router.delete('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:se
 router.delete('/years/:examName/:subjectName/:trackName/:subCategoryName/:year', async (req, res) => {
   return deleteEntirePeriod(req, res, 'years');
 });
-
 
 // ========== KEEP EXISTING ROUTES ==========
 
