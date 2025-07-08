@@ -238,148 +238,6 @@ router.get('/groups/:examName/:subjectName/:trackName/:subCategoryName', async (
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
-/**
- * NEW: Update content group
- * @route   PUT /api/content/groups/:examName/:subjectName/:trackName/:subCategoryName/:groupKey
- * @desc    Update multiple content items in a group
- * @access  Private
- */
-router.put('/groups/:examName/:subjectName/:trackName/:subCategoryName/:groupKey', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName, groupKey } = req.params;
-    const { items, groupType } = req.body;
-
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: 'Items array is required' });
-    }
-
-    const results = { updated: [], errors: [] };
-
-    // Update each item in the group
-    for (const [index, item] of items.entries()) {
-      try {
-        if (!item.id) {
-          results.errors.push({
-            index,
-            error: 'Item ID is required'
-          });
-          continue;
-        }
-
-        const updatedContent = await examModel.updateContent(item.id, {
-          displayName: item.displayName,
-          description: item.description,
-          orderIndex: item.orderIndex,
-          isActive: item.isActive !== undefined ? item.isActive : true
-        });
-
-        if (updatedContent) {
-          results.updated.push({
-            id: updatedContent._id,
-            name: updatedContent.name,
-            displayName: updatedContent.displayName
-          });
-        }
-      } catch (error) {
-        results.errors.push({
-          index,
-          id: item.id,
-          error: error.message
-        });
-      }
-    }
-
-    res.json({
-      message: `Updated ${results.updated.length} items in group "${groupKey}"`,
-      context: { examName, subjectName, trackName, subCategoryName },
-      groupKey,
-      groupType,
-      results
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-/**
- * NEW: Delete content group
- * @route   DELETE /api/content/groups/:examName/:subjectName/:trackName/:subCategoryName/:groupKey
- * @desc    Delete all content items in a group (soft delete)
- * @access  Private
- */
-router.delete('/groups/:examName/:subjectName/:trackName/:subCategoryName/:groupKey', async (req, res) => {
-  try {
-    const { examName, subjectName, trackName, subCategoryName, groupKey } = req.params;
-    const { groupType } = req.query;
-
-    // Get content in this context first
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
-    
-    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
-    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
-    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
-    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
-
-    if (!exam || !subject || !subCategory || !track) {
-      return res.status(404).json({ message: 'Context not found' });
-    }
-
-    const content = await examModel.getContentByFilters({
-      examId: exam._id,
-      subjectId: subject._id,
-      trackId: track._id,
-      subCategoryId: subCategory._id
-    });
-
-    // Filter content by group
-    let contentToDelete = [];
-
-    if (groupType === 'topic') {
-      contentToDelete = content.filter(item => 
-        (item.topicId?.name || 'uncategorized') === groupKey
-      );
-    } else if (groupType === 'day') {
-      const dayNum = groupKey.split('_')[1];
-      contentToDelete = content.filter(item => 
-        item.name.match(new RegExp(`day${dayNum}`, 'i'))
-      );
-    } else if (groupType === 'year') {
-      contentToDelete = content.filter(item => 
-        item.name.includes(groupKey)
-      );
-    }
-
-    const results = { deleted: [], errors: [] };
-
-    // Delete each item
-    for (const item of contentToDelete) {
-      try {
-        await examModel.deleteContent(item._id);
-        results.deleted.push({
-          id: item._id,
-          name: item.name,
-          displayName: item.displayName
-        });
-      } catch (error) {
-        results.errors.push({
-          id: item._id,
-          name: item.name,
-          error: error.message
-        });
-      }
-    }
-
-    res.json({
-      message: `Deleted ${results.deleted.length} items from group "${groupKey}"`,
-      context: { examName, subjectName, trackName, subCategoryName },
-      groupKey,
-      groupType,
-      results
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
 
 // ========== WEEK-BASED TRACK CONTENT UPLOAD ==========
 
@@ -405,7 +263,7 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
     }
 
     // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    const { Exam, Subject, Track, SubCategory, Content } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
     const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
@@ -427,6 +285,34 @@ router.post('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumb
     if (track.duration && week > track.duration) {
       return res.status(400).json({ 
         message: `Week ${week} exceeds track duration of ${track.duration} weeks` 
+      });
+    }
+
+    // NEW: Check for existing content in this week to prevent duplicates
+    const existingWeekContent = await Content.findOne({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      'metadata.week': week
+    });
+
+    if (existingWeekContent) {
+      return res.status(409).json({ 
+        message: `Content for Week ${week} already exists. Cannot upload duplicate weekly content.`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          week: week,
+          weekLabel: `Week ${week}`
+        },
+        existingContent: {
+          name: existingWeekContent.name,
+          displayName: existingWeekContent.displayName,
+          createdAt: existingWeekContent.createdAt
+        }
       });
     }
 
@@ -509,7 +395,7 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
     }
 
     // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    const { Exam, Subject, Track, SubCategory, Content } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
     const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
@@ -531,6 +417,34 @@ router.post('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
     if (track.duration && day > track.duration) {
       return res.status(400).json({ 
         message: `Day ${day} exceeds track duration of ${track.duration} days` 
+      });
+    }
+
+    // NEW: Check for existing content in this day to prevent duplicates
+    const existingDayContent = await Content.findOne({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      'metadata.day': day
+    });
+
+    if (existingDayContent) {
+      return res.status(409).json({ 
+        message: `Content for Day ${day} already exists. Cannot upload duplicate daily content.`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          day: day,
+          dayLabel: `Day ${day}`
+        },
+        existingContent: {
+          name: existingDayContent.name,
+          displayName: existingDayContent.displayName,
+          createdAt: existingDayContent.createdAt
+        }
       });
     }
 
@@ -610,7 +524,7 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
     const numericSemester = parseInt(semesterNumber) || 1; // For validation and ordering
 
     // Resolve context
-    const { Exam, Subject, Track, SubCategory } = require('../models/exam');
+    const { Exam, Subject, Track, SubCategory, Content } = require('../models/exam');
     
     const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
     const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
@@ -632,6 +546,34 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
     if (track.duration && numericSemester > track.duration) {
       return res.status(400).json({ 
         message: `Semester ${originalSemesterNumber} exceeds track duration of ${track.duration} semesters` 
+      });
+    }
+
+    // NEW: Check for existing content in this semester to prevent duplicates
+    const existingSemesterContent = await Content.findOne({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      'metadata.semesterName': originalSemesterNumber
+    });
+
+    if (existingSemesterContent) {
+      return res.status(409).json({ 
+        message: `Content for Semester "${originalSemesterNumber}" already exists. Cannot upload duplicate semester content.`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          semester: numericSemester,
+          semesterName: originalSemesterNumber
+        },
+        existingContent: {
+          name: existingSemesterContent.name,
+          displayName: existingSemesterContent.displayName,
+          createdAt: existingSemesterContent.createdAt
+        }
       });
     }
 
@@ -696,7 +638,403 @@ router.post('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:seme
   }
 });
 
+// ========== TIME-BASED CONTENT UPDATE ROUTES ==========
 
+/**
+ * UPDATE: Update entire week content
+ * @route   PUT /api/content/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumber
+ * @desc    Update all content items in a specific week
+ * @access  Private
+ */
+router.put('/weeks/:examName/:subjectName/:trackName/:subCategoryName/:weekNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, weekNumber } = req.params;
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Items array is required' });
+    }
+
+    // Validate week number
+    const week = parseInt(weekNumber);
+    if (isNaN(week) || week < 1) {
+      return res.status(400).json({ message: 'Valid week number (1 or greater) is required' });
+    }
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory, Content } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'weeks') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a weekly track (type: ${track.trackType})` 
+      });
+    }
+
+    // Get existing content for this week
+    const existingContent = await Content.find({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      'metadata.week': week
+    });
+
+    if (existingContent.length === 0) {
+      return res.status(404).json({
+        message: `No content found for Week ${week}`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          week: week
+        }
+      });
+    }
+
+    const results = { updated: [], errors: [] };
+
+    // Update each item
+    for (const [index, item] of items.entries()) {
+      try {
+        // Find the content item by name or index
+        let contentToUpdate;
+        
+        if (item.name) {
+          // Find by name (with week prefix)
+          const fullName = item.name.startsWith(`week${week}_`) ? item.name : `week${week}_${item.name}`;
+          contentToUpdate = existingContent.find(content => content.name === fullName);
+        } else if (item.index !== undefined) {
+          // Find by index position
+          contentToUpdate = existingContent[item.index];
+        } else if (item.id) {
+          // Find by ID
+          contentToUpdate = existingContent.find(content => content._id.toString() === item.id);
+        }
+
+        if (!contentToUpdate) {
+          results.errors.push({
+            index,
+            item: item.name || item.index || item.id,
+            error: 'Content item not found in this week'
+          });
+          continue;
+        }
+
+        // Update the content
+        const updatedContent = await examModel.updateContent(contentToUpdate._id, {
+          displayName: item.displayName || contentToUpdate.displayName,
+          description: item.description || contentToUpdate.description,
+          orderIndex: item.orderIndex !== undefined ? ((week * 1000) + item.orderIndex) : contentToUpdate.orderIndex,
+          isActive: item.isActive !== undefined ? item.isActive : contentToUpdate.isActive,
+          filePath: item.filePath || contentToUpdate.filePath,
+          fileType: item.fileType || contentToUpdate.fileType,
+          fileSize: item.fileSize || contentToUpdate.fileSize
+        });
+
+        if (updatedContent) {
+          results.updated.push({
+            id: updatedContent._id,
+            name: updatedContent.name,
+            displayName: updatedContent.displayName,
+            orderIndex: updatedContent.orderIndex
+          });
+        }
+      } catch (error) {
+        results.errors.push({
+          index,
+          item: item.name || item.index || item.id,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      message: `Updated ${results.updated.length} items in Week ${week}`,
+      context: {
+        exam: exam.displayName,
+        subject: subject.displayName,
+        track: track.displayName,
+        subCategory: subCategory.displayName,
+        week: week,
+        weekLabel: `Week ${week}`
+      },
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * UPDATE: Update entire day content
+ * @route   PUT /api/content/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber
+ * @desc    Update all content items in a specific day
+ * @access  Private
+ */
+router.put('/days/:examName/:subjectName/:trackName/:subCategoryName/:dayNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, dayNumber } = req.params;
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Items array is required' });
+    }
+
+    // Validate day number
+    const day = parseInt(dayNumber);
+    if (isNaN(day) || day < 1) {
+      return res.status(400).json({ message: 'Valid day number (1 or greater) is required' });
+    }
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory, Content } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'days') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a daily track (type: ${track.trackType})` 
+      });
+    }
+
+    // Get existing content for this day
+    const existingContent = await Content.find({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      'metadata.day': day
+    });
+
+    if (existingContent.length === 0) {
+      return res.status(404).json({
+        message: `No content found for Day ${day}`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          day: day
+        }
+      });
+    }
+
+    const results = { updated: [], errors: [] };
+
+    // Update each item
+    for (const [index, item] of items.entries()) {
+      try {
+        let contentToUpdate;
+        
+        if (item.name) {
+          const fullName = item.name.startsWith(`day${day}_`) ? item.name : `day${day}_${item.name}`;
+          contentToUpdate = existingContent.find(content => content.name === fullName);
+        } else if (item.index !== undefined) {
+          contentToUpdate = existingContent[item.index];
+        } else if (item.id) {
+          contentToUpdate = existingContent.find(content => content._id.toString() === item.id);
+        }
+
+        if (!contentToUpdate) {
+          results.errors.push({
+            index,
+            item: item.name || item.index || item.id,
+            error: 'Content item not found in this day'
+          });
+          continue;
+        }
+
+        const updatedContent = await examModel.updateContent(contentToUpdate._id, {
+          displayName: item.displayName || contentToUpdate.displayName,
+          description: item.description || contentToUpdate.description,
+          orderIndex: item.orderIndex !== undefined ? ((day * 100) + item.orderIndex) : contentToUpdate.orderIndex,
+          isActive: item.isActive !== undefined ? item.isActive : contentToUpdate.isActive,
+          filePath: item.filePath || contentToUpdate.filePath,
+          fileType: item.fileType || contentToUpdate.fileType,
+          fileSize: item.fileSize || contentToUpdate.fileSize
+        });
+
+        if (updatedContent) {
+          results.updated.push({
+            id: updatedContent._id,
+            name: updatedContent.name,
+            displayName: updatedContent.displayName,
+            orderIndex: updatedContent.orderIndex
+          });
+        }
+      } catch (error) {
+        results.errors.push({
+          index,
+          item: item.name || item.index || item.id,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      message: `Updated ${results.updated.length} items in Day ${day}`,
+      context: {
+        exam: exam.displayName,
+        subject: subject.displayName,
+        track: track.displayName,
+        subCategory: subCategory.displayName,
+        day: day,
+        dayLabel: `Day ${day}`
+      },
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * UPDATE: Update entire semester content
+ * @route   PUT /api/content/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber
+ * @desc    Update all content items in a specific semester
+ * @access  Private
+ */
+router.put('/semesters/:examName/:subjectName/:trackName/:subCategoryName/:semesterNumber', async (req, res) => {
+  try {
+    const { examName, subjectName, trackName, subCategoryName, semesterNumber } = req.params;
+    const { items } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Items array is required' });
+    }
+
+    const originalSemesterNumber = semesterNumber;
+    const numericSemester = parseInt(semesterNumber) || 1;
+
+    // Resolve context
+    const { Exam, Subject, Track, SubCategory, Content } = require('../models/exam');
+    
+    const exam = await Exam.findOne({ name: examName.toUpperCase(), isActive: true });
+    const subject = await Subject.findOne({ examId: exam?._id, name: subjectName, isActive: true });
+    const subCategory = await SubCategory.findOne({ examId: exam?._id, name: subCategoryName.toLowerCase(), isActive: true });
+    const track = await Track.findOne({ examId: exam?._id, subCategoryId: subCategory?._id, name: trackName, isActive: true });
+
+    if (!exam || !subject || !subCategory || !track) {
+      return res.status(404).json({ message: 'Context not found - check exam, subject, track, or subcategory names' });
+    }
+
+    // Validate track type
+    if (track.trackType !== 'semester') {
+      return res.status(400).json({ 
+        message: `Track "${trackName}" is not a semester track (type: ${track.trackType})` 
+      });
+    }
+
+    // Get existing content for this semester
+    const existingContent = await Content.find({
+      examName: exam.name,
+      subjectName: subject.name,
+      trackName: track.name,
+      subCategoryName: subCategory.name,
+      'metadata.semesterName': originalSemesterNumber
+    });
+
+    if (existingContent.length === 0) {
+      return res.status(404).json({
+        message: `No content found for Semester "${originalSemesterNumber}"`,
+        context: {
+          exam: exam.displayName,
+          subject: subject.displayName,
+          track: track.displayName,
+          subCategory: subCategory.displayName,
+          semester: numericSemester,
+          semesterName: originalSemesterNumber
+        }
+      });
+    }
+
+    const results = { updated: [], errors: [] };
+
+    // Update each item
+    for (const [index, item] of items.entries()) {
+      try {
+        let contentToUpdate;
+        
+        if (item.name) {
+          const fullName = item.name.startsWith(`semester${numericSemester}_`) ? item.name : `semester${numericSemester}_${item.name}`;
+          contentToUpdate = existingContent.find(content => content.name === fullName);
+        } else if (item.index !== undefined) {
+          contentToUpdate = existingContent[item.index];
+        } else if (item.id) {
+          contentToUpdate = existingContent.find(content => content._id.toString() === item.id);
+        }
+
+        if (!contentToUpdate) {
+          results.errors.push({
+            index,
+            item: item.name || item.index || item.id,
+            error: 'Content item not found in this semester'
+          });
+          continue;
+        }
+
+        const updatedContent = await examModel.updateContent(contentToUpdate._id, {
+          displayName: item.displayName || contentToUpdate.displayName,
+          description: item.description || contentToUpdate.description,
+          orderIndex: item.orderIndex !== undefined ? ((numericSemester * 100000) + item.orderIndex) : contentToUpdate.orderIndex,
+          isActive: item.isActive !== undefined ? item.isActive : contentToUpdate.isActive,
+          filePath: item.filePath || contentToUpdate.filePath,
+          fileType: item.fileType || contentToUpdate.fileType,
+          fileSize: item.fileSize || contentToUpdate.fileSize
+        });
+
+        if (updatedContent) {
+          results.updated.push({
+            id: updatedContent._id,
+            name: updatedContent.name,
+            displayName: updatedContent.displayName,
+            orderIndex: updatedContent.orderIndex
+          });
+        }
+      } catch (error) {
+        results.errors.push({
+          index,
+          item: item.name || item.index || item.id,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      message: `Updated ${results.updated.length} items in Semester "${originalSemesterNumber}"`,
+      context: {
+        exam: exam.displayName,
+        subject: subject.displayName,
+        track: track.displayName,
+        subCategory: subCategory.displayName,
+        semester: numericSemester,
+        semesterName: originalSemesterNumber
+      },
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 // ========== UTILITY ENDPOINTS ==========
 
@@ -751,6 +1089,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
         periods.push({
           number: i,
           name: monthNames[i - 1] || `Month ${i}`,
+          type: 'month',
           uploadEndpoint: `/api/content/months/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
         });
       }
@@ -762,6 +1101,17 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
           name: semesterNames[i - 1] || `Semester ${i}`,
           type: 'semester',
           uploadEndpoint: `/api/content/semesters/${examName}/${subjectName}/${trackName}/${subCategoryName}/${i}`
+        });
+      }
+    } else if (trackType === 'years') {
+      const currentYear = new Date().getFullYear();
+      for (let i = 0; i < duration; i++) {
+        const year = currentYear + i;
+        periods.push({
+          number: year,
+          name: year.toString(),
+          type: 'year',
+          uploadEndpoint: `/api/content/years/${examName}/${subjectName}/${trackName}/${subCategoryName}/${year}`
         });
       }
     }
@@ -784,7 +1134,7 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/periods', async 
 /**
  * NEW: Get content for a specific time period
  * @route   GET /api/content/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:periodNumber
- * @desc    Get content for a specific week/day/month/semester
+ * @desc    Get content for a specific week/day/month/semester/year
  * @access  Public
  */
 router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:periodNumber', async (req, res) => {
@@ -804,11 +1154,11 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:peri
     }
 
     // Validate track type
-    const validTypes = ['weeks', 'days', 'months', 'semester'];
-    const trackTypeMap = { weeks: 'week', days: 'day', months: 'month', semester: 'semester' };
+    const validTypes = ['weeks', 'days', 'months', 'semester', 'years'];
+    const trackTypeMap = { weeks: 'week', days: 'day', months: 'month', semester: 'semester', years: 'year' };
     
     if (!validTypes.includes(trackType)) {
-      return res.status(400).json({ message: 'Invalid track type. Use: weeks, days, months, or semester' });
+      return res.status(400).json({ message: 'Invalid track type. Use: weeks, days, months, semester, or years' });
     }
 
     if (track.trackType !== trackType) {
@@ -833,6 +1183,10 @@ router.get('/:examName/:subjectName/:trackName/:subCategoryName/:trackType/:peri
     // Filter content for this specific period
     const periodContent = content.filter(item => {
       const periodKey = trackTypeMap[trackType];
+      if (trackType === 'semester') {
+        // For semester, check both numeric semester and semesterName
+        return item.metadata && (item.metadata[periodKey] === period || item.metadata.semesterName === periodNumber);
+      }
       return item.metadata && item.metadata[periodKey] === period;
     });
 
