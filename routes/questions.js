@@ -2156,20 +2156,17 @@ router.delete('/years/:examName/:subjectName/:trackName/:subCategoryName/:year',
       });
     }
 
-    // Delete questions by setting isActive to false
+    // PERMANENTLY DELETE questions from database
     const { Question } = require('../models/exam');
-    const result = await Question.updateMany(
-      {
-        examId: exam._id,
-        subjectId: subject._id,
-        trackId: track._id,
-        year: questionYear.toString()
-      },
-      { isActive: false }
-    );
+    const result = await Question.deleteMany({
+      examId: exam._id,
+      subjectId: subject._id,
+      trackId: track._id,
+      year: questionYear.toString()
+    });
     
     res.json({
-      message: `Successfully deleted ${result.modifiedCount} questions for Year ${year}`,
+      message: `Successfully permanently deleted ${result.deletedCount} questions for Year ${year}`,
       context: {
         exam: exam.displayName,
         subject: subject.displayName,
@@ -2179,7 +2176,7 @@ router.delete('/years/:examName/:subjectName/:trackName/:subCategoryName/:year',
       deleted: {
         timePeriod: 'year',
         periodValue: questionYear,
-        count: result.modifiedCount
+        count: result.deletedCount
       }
     });
   } catch (error) {
