@@ -78,4 +78,4 @@ function arrayMinLength(val) {
 // Create compound index for faster querying by category, year, and subject
 skillUpSchema.index({ category: 1, year: 1, subject: 1 });
 
-module.exports = mongoose.model('SkillUp', skillUpSchema);
+module.exports = mongoose.models.SkillUp || mongoose.model('SkillUp', skillUpSchema);
