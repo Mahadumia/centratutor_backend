@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const skillUpSchema = mongoose.Schema({
+const skillUpBatchSchema = mongoose.Schema({
     category: {
         type: String,    // e.g., "AI", "Data Science", "Web Development"
         required: true
@@ -75,7 +75,7 @@ function arrayMinLength(val) {
     return val.length > 0;
 }
 
+// Create compound index for faster querying by category, year, and subject
+skillUpBatchSchema.index({ category: 1, year: 1, subject: 1 });
 
-skillUpSchema.index({ category: 1, year: 1, subject: 1 });
-
-module.exports = mongoose.models.SkillUp || mongoose.model('SkillUp', skillUpSchema);
+module.exports = mongoose.model('SkillUpBatch', skillUpBatchSchema);

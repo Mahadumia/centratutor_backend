@@ -1,11 +1,11 @@
 const router = require('express').Router();
-const SkillUp = require('../../models/tutorial_and_skills/skillup');
+const SkillUpBatch = require('../../models/tutorial_and_skills/skillup');
 
 // Create a new skill up
 router.post('/create', async (req, res) => {
     try {
         // Check if a skill up with the same category, year, and subject already exists
-        const existingClass = await SkillUp.findOne({
+        const existingClass = await SkillUpBatch.findOne({
             category: req.body.category,
             year: req.body.year,
             subject: req.body.subject
@@ -34,7 +34,7 @@ router.post('/create', async (req, res) => {
             }
         }
 
-        const skillUp = new SkillUp({
+        const skillUp = new SkillUpBatch({
             category: req.body.category,
             year: req.body.year,
             subject: req.body.subject,
@@ -55,7 +55,7 @@ router.post('/create', async (req, res) => {
 // Get skill up by category, year and subject
 router.get('/:category/:year/:subject', async (req, res) => {
     try {
-        const skillUp = await SkillUp.findOne({
+        const skillUp = await SkillUpBatch.findOne({
             category: req.params.category,
             year: req.params.year,
             subject: req.params.subject
