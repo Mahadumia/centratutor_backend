@@ -79,6 +79,7 @@ const authRoutes = require('./routes/auth/auth');
 const jupebQuestionBankRoutes = require('./routes/jupeb/questionBank'); 
 const tutorialAndSkillsClassRoutes = require('./routes/tutotial_and_skills/tutorial_skill');
 const nightClassRoutes = require('./routes/tutotial_and_skills/nightclass');
+const skillupRoutes = require('./routes/tutotial_and_skills/skillup');
 const pqVideoClassRoutes = require('./routes/tutotial_and_skills/pastquestionvideo');
 const subscriptionRoutes = require('./routes/subscription/subscription');
 
@@ -94,6 +95,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/jupeb/question-bank', jupebQuestionBankRoutes); 
 app.use('/api/tutorial-skill/home', tutorialAndSkillsClassRoutes);
 app.use('/api/tutorial-skill/nightclass', nightClassRoutes);
+app.use('/api/tutorial-skill/skillup', skillupRoutes);
 app.use('/api/tutorial-skill/pastquestionvideo', pqVideoClassRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 
