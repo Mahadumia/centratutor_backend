@@ -58,7 +58,7 @@ router.post('/create', async (req, res) => {
 router.get('/SkillUp/data', async (req, res) => {
     try {
         // Get all skill up courses
-        const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch');
+        const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch year');
 
         // Extract unique categories
         const categories = ['All', ...new Set(skillUps.map(item => item.category))];
@@ -148,10 +148,13 @@ router.get('/SkillUp/content', async (req, res) => {
 // Get skill up by category, year and subject (matches Flutter sub-page expectations)
 router.get('/:category/:year/:subject', async (req, res) => {
     try {
+        // URL decode the subject parameter to handle spaces
+        const decodedSubject = decodeURIComponent(req.params.subject);
+        
         const skillUp = await SkillUpBatch.findOne({
-            category: req.params.category,
+            category: new RegExp(`^${req.params.category}$`, 'i'), // Case-insensitive search
             year: req.params.year,
-            subject: req.params.subject
+            subject: decodedSubject
         });
 
         if (!skillUp) {
@@ -173,7 +176,7 @@ router.get('/:category/:year/:subject', async (req, res) => {
 router.get('/:category/:year', async (req, res) => {
     try {
         const skillUps = await SkillUpBatch.find({
-            category: req.params.category,
+            category: new RegExp(`^${req.params.category}$`, 'i'), // Case-insensitive search
             year: req.params.year
         }).select('subject subjectDescription batch');
 
