@@ -75,7 +75,7 @@ router.get('/SkillUp/data', async (req, res) => {
                 description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
                 category: skillUp.category,
                 catName: 'skillup', // This matches what Flutter expects
-                level: 'professional', // Default level for skill courses
+                level: skillUp.category.toLowerCase(), // FIXED: Use category as level for navigation
                 year: skillUp.year || new Date().getFullYear().toString(),
                 author: 'CentraTutor Team',
                 duration: estimatedDuration,
@@ -129,7 +129,7 @@ router.get('/SkillUp/content', async (req, res) => {
                 description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
                 category: skillUp.category,
                 catName: 'skillup',
-                level: 'professional',
+                level: skillUp.category.toLowerCase(), // FIXED: Use category as level for navigation
                 year: skillUp.year || new Date().getFullYear().toString(),
                 author: 'CentraTutor Team',
                 duration: estimatedDuration,
