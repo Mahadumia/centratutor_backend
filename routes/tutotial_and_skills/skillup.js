@@ -52,7 +52,100 @@ router.post('/create', async (req, res) => {
     }
 });
 
-// Get skill up by category, year and subject
+// NEW ROUTES THAT MATCH FLUTTER APP EXPECTATIONS
+
+// Get full data for SkillUp mode (matches Flutter app's expectation)
+router.get('/SkillUp/data', async (req, res) => {
+    try {
+        // Get all skill up courses
+        const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch');
+
+        // Extract unique categories
+        const categories = ['All', ...new Set(skillUps.map(item => item.category))];
+
+        // Transform data to match Flutter app's expected format
+        const items = skillUps.map(skillUp => {
+            // Calculate total duration (you can customize this logic)
+            const totalLessons = skillUp.batch.reduce((total, batch) => total + batch.contents.length, 0);
+            const estimatedDuration = `${totalLessons * 15} min`; // Assuming 15 min per lesson
+
+            return {
+                id: skillUp._id,
+                title: skillUp.subject,
+                description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
+                category: skillUp.category,
+                catName: 'skillup', // This matches what Flutter expects
+                level: 'professional', // Default level for skill courses
+                year: skillUp.year || new Date().getFullYear().toString(),
+                author: 'CentraTutor Team',
+                duration: estimatedDuration,
+                thumbnail: 'assets/images/skillup_placeholder.png', // You can customize this
+                time: null // SkillUp courses don't have specific times like night classes
+            };
+        });
+
+        res.json({
+            categories,
+            items
+        });
+    } catch (error) {
+        console.error('Error fetching SkillUp data:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// Get categories for SkillUp mode
+router.get('/SkillUp/categories', async (req, res) => {
+    try {
+        const skillUps = await SkillUpBatch.find({}).distinct('category');
+        const categories = ['All', ...skillUps];
+        res.json(categories);
+    } catch (error) {
+        console.error('Error fetching SkillUp categories:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// Get content for SkillUp mode, optionally filtered by category
+router.get('/SkillUp/content', async (req, res) => {
+    try {
+        const { category } = req.query;
+        
+        let query = {};
+        if (category && category !== 'All') {
+            query.category = category;
+        }
+
+        const skillUps = await SkillUpBatch.find(query).select('category subject subjectDescription batch year');
+
+        // Transform data to match Flutter app's expected format
+        const items = skillUps.map(skillUp => {
+            const totalLessons = skillUp.batch.reduce((total, batch) => total + batch.contents.length, 0);
+            const estimatedDuration = `${totalLessons * 15} min`;
+
+            return {
+                id: skillUp._id,
+                title: skillUp.subject,
+                description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
+                category: skillUp.category,
+                catName: 'skillup',
+                level: 'professional',
+                year: skillUp.year || new Date().getFullYear().toString(),
+                author: 'CentraTutor Team',
+                duration: estimatedDuration,
+                thumbnail: 'assets/images/skillup_placeholder.png',
+                time: null
+            };
+        });
+
+        res.json(items);
+    } catch (error) {
+        console.error('Error fetching SkillUp content:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// Get skill up by category, year and subject (matches Flutter sub-page expectations)
 router.get('/:category/:year/:subject', async (req, res) => {
     try {
         const skillUp = await SkillUpBatch.findOne({
@@ -79,10 +172,10 @@ router.get('/:category/:year/:subject', async (req, res) => {
 // Get all subjects for a specific category and year
 router.get('/:category/:year', async (req, res) => {
     try {
-        const skillUps = await SkillUp.find({
+        const skillUps = await SkillUpBatch.find({
             category: req.params.category,
             year: req.params.year
-        }).select('subject subjectDescription topics');
+        }).select('subject subjectDescription batch');
 
         if (skillUps.length === 0) {
             return res.status(404).json({
@@ -104,8 +197,7 @@ router.put('/:id', async (req, res) => {
     try {
         // If trying to update category, year, or subject, check for duplicates
         if (req.body.category || req.body.year || req.body.subject) {
-            // First fetch the current class to get the current values
-            const currentClass = await SkillUp.findById(req.params.id);
+            const currentClass = await SkillUpBatch.findById(req.params.id);
             
             if (!currentClass) {
                 return res.status(404).json({
@@ -113,16 +205,14 @@ router.put('/:id', async (req, res) => {
                 });
             }
             
-            // Prepare the search criteria with new or existing values
             const searchCriteria = {
                 category: req.body.category || currentClass.category,
                 year: req.body.year || currentClass.year,
                 subject: req.body.subject || currentClass.subject,
-                _id: { $ne: req.params.id } // Exclude the current document
+                _id: { $ne: req.params.id }
             };
             
-            // Check if another class with the same criteria exists
-            const duplicateClass = await SkillUp.findOne(searchCriteria);
+            const duplicateClass = await SkillUpBatch.findOne(searchCriteria);
             
             if (duplicateClass) {
                 return res.status(409).json({
@@ -139,7 +229,6 @@ router.put('/:id', async (req, res) => {
                 });
             }
 
-            // Check each batch for valid topics
             for (let i = 0; i < req.body.batch.length; i++) {
                 const batch = req.body.batch[i];
                 if (!batch.topics || !Array.isArray(batch.topics) || batch.topics.length === 0) {
@@ -150,13 +239,12 @@ router.put('/:id', async (req, res) => {
             }
         }
 
-        // Set the updated date
         req.body.updatedAt = Date.now();
         
-        const updatedSkillUp = await SkillUp.findByIdAndUpdate(
+        const updatedSkillUp = await SkillUpBatch.findByIdAndUpdate(
             req.params.id,
             { $set: req.body },
-            { new: true } // Return the updated document
+            { new: true }
         );
 
         if (!updatedSkillUp) {
@@ -177,7 +265,7 @@ router.put('/:id', async (req, res) => {
 // Add a new batch to a skill up
 router.post('/:id/batch', async (req, res) => {
     try {
-        const skillUp = await SkillUp.findById(req.params.id);
+        const skillUp = await SkillUpBatch.findById(req.params.id);
         
         if (!skillUp) {
             return res.status(404).json({
@@ -185,7 +273,6 @@ router.post('/:id/batch', async (req, res) => {
             });
         }
 
-        // Validate that the batch has topics
         if (!req.body.topics || !Array.isArray(req.body.topics) || req.body.topics.length === 0) {
             return res.status(400).json({
                 message: 'Batch must have a topics array with at least one topic'
@@ -208,7 +295,7 @@ router.post('/:id/batch', async (req, res) => {
 // Update a specific batch
 router.put('/:id/batch/:batchId', async (req, res) => {
     try {
-        const skillUp = await SkillUp.findById(req.params.id);
+        const skillUp = await SkillUpBatch.findById(req.params.id);
         
         if (!skillUp) {
             return res.status(404).json({
@@ -223,7 +310,6 @@ router.put('/:id/batch/:batchId', async (req, res) => {
             });
         }
 
-        // If topics are being updated, validate them
         if (req.body.topics !== undefined) {
             if (!Array.isArray(req.body.topics) || req.body.topics.length === 0) {
                 return res.status(400).json({
@@ -252,7 +338,7 @@ router.put('/:id/batch/:batchId', async (req, res) => {
 // Add content to a specific batch
 router.post('/:id/batch/:batchId/content', async (req, res) => {
     try {
-        const skillUp = await SkillUp.findById(req.params.id);
+        const skillUp = await SkillUpBatch.findById(req.params.id);
         
         if (!skillUp) {
             return res.status(404).json({
@@ -286,7 +372,7 @@ router.put('/:id/batch/:batchId/content/:contentId/readStatus', async (req, res)
     try {
         const { isRead } = req.body;
         
-        const skillUp = await SkillUp.findById(req.params.id);
+        const skillUp = await SkillUpBatch.findById(req.params.id);
         
         if (!skillUp) {
             return res.status(404).json({
@@ -328,7 +414,7 @@ router.put('/:id/batch/:batchId/content/:contentId/readStatus', async (req, res)
 // Delete a skill up
 router.delete('/:id', async (req, res) => {
     try {
-        const deletedSkillUp = await SkillUp.findByIdAndDelete(req.params.id);
+        const deletedSkillUp = await SkillUpBatch.findByIdAndDelete(req.params.id);
         
         if (!deletedSkillUp) {
             return res.status(404).json({

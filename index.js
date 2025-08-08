@@ -95,6 +95,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/jupeb/question-bank', jupebQuestionBankRoutes); 
 app.use('/api/tutorial-skill/home', tutorialAndSkillsClassRoutes);
 app.use('/api/tutorial-skill/nightclass', nightClassRoutes);
+app.use('/api/tutorial-skill/home', skillupRoutes);
 app.use('/api/tutorial-skill/skillup', skillupRoutes);
 app.use('/api/tutorial-skill/pastquestionvideo', pqVideoClassRoutes);
 app.use('/api/subscription', subscriptionRoutes);
