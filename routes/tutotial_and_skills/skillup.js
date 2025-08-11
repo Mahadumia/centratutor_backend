@@ -378,4 +378,43 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+
+router.delete('/admin/delete-all', async (req, res) => {
+    try {
+        // Optional: Add authentication/authorization check here
+        // if (!req.user || req.user.role !== 'admin') {
+        //     return res.status(403).json({
+        //         message: 'Unauthorized: Admin access required'
+        //     });
+        // }
+
+        // Optional: Require confirmation parameter to prevent accidental deletion
+        const { confirmDelete } = req.query;
+        if (confirmDelete !== 'CONFIRM_DELETE_ALL_SKILLUPS') {
+            return res.status(400).json({
+                message: 'Deletion not confirmed. Add query parameter: ?confirmDelete=CONFIRM_DELETE_ALL_SKILLUPS'
+            });
+        }
+
+        // Get count before deletion for logging
+        const countBeforeDeletion = await SkillUpBatch.countDocuments();
+        
+        // Delete all skill ups
+        const result = await SkillUpBatch.deleteMany({});
+        
+        console.log(`ADMIN ACTION: All SkillUps deleted. Count: ${countBeforeDeletion}, Deleted: ${result.deletedCount}`);
+        
+        res.status(200).json({
+            message: 'All skill ups deleted successfully',
+            deletedCount: result.deletedCount,
+            previousCount: countBeforeDeletion
+        });
+    } catch (error) {
+        console.error('Error deleting all skill ups:', error);
+        res.status(500).json({
+            message: 'Failed to delete all skill ups',
+            error: error.message
+        });
+    }
+});
 module.exports = router;
