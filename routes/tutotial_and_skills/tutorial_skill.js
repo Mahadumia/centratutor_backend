@@ -1,4 +1,4 @@
-// Updated tutorial_skill_routes.js - Fully Dynamic with SkillUpBatch Integration
+// Updated tutorial_skill_routes.js - Complete Integration with SkillUpBatch
 const express = require('express');
 const router = express.Router();
 const TutorialSkillModel = require('../../models/tutorial_and_skills/tutorial_skill');
@@ -22,7 +22,7 @@ router.get('/:mode/data', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Handle SkillUp data from SkillUpBatch collection
+      // Handle SkillUp data from SkillUpBatch collection ONLY
       const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch year');
 
       // Extract unique categories and add "All" at the beginning
@@ -83,7 +83,7 @@ router.get('/:mode/content', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Handle SkillUp content from SkillUpBatch collection
+      // Handle SkillUp content from SkillUpBatch collection ONLY
       let query = {};
       if (category && category !== 'All') {
         query.category = category;
@@ -146,7 +146,7 @@ router.get('/:mode/categories', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Get categories from SkillUpBatch collection
+      // Get categories from SkillUpBatch collection ONLY
       const skillUps = await SkillUpBatch.find({}).distinct('category');
       const categories = ['All', ...skillUps];
       return res.json(categories);
@@ -176,7 +176,7 @@ router.get('/:mode/content/:id', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Get specific SkillUp content by ID
+      // Get specific SkillUp content by ID from SkillUpBatch collection ONLY
       const skillUp = await SkillUpBatch.findById(id);
       
       if (!skillUp) {
@@ -235,7 +235,7 @@ router.post('/:mode/content', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Create new SkillUpBatch entry
+      // Create new SkillUpBatch entry - redirect to skillup creation
       const requiredFields = ['category', 'year', 'subject', 'batch'];
       
       for (const field of requiredFields) {
@@ -393,10 +393,9 @@ router.post('/:mode/categories', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // For SkillUp, we don't need to create categories separately
-      // They are created automatically when SkillUpBatch entries are added
+      // For SkillUp, categories are created automatically when SkillUpBatch entries are added
       return res.status(200).json({ 
-        message: 'SkillUp categories are created automatically when adding content',
+        message: 'SkillUp categories are created automatically when adding content via /skillup/create',
         categoryName 
       });
     } else {
@@ -435,7 +434,7 @@ router.delete('/:mode/categories/:name', async (req, res) => {
       
       if (existingContent) {
         return res.status(400).json({ 
-          message: 'Cannot delete category that has associated content. Delete the content first.' 
+          message: 'Cannot delete category that has associated content. Delete the content first via /skillup/ routes.' 
         });
       }
       
@@ -456,12 +455,12 @@ router.delete('/:mode/categories/:name', async (req, res) => {
   }
 });
 
-// ADDITIONAL ROUTES FOR FLUTTER APP COMPATIBILITY
-// Handle /home/ prefixed routes that the Flutter app is currently using
+// FLUTTER APP COMPATIBILITY ROUTES
+// These handle the /home/ URLs that your Flutter app currently uses
 
 /**
  * @route   GET /api/tutorial-skill/home/:mode/data
- * @desc    Get full data for a specific mode (Tutorial or SkillUp) - Flutter compatibility
+ * @desc    Flutter compatibility - Get full data for a specific mode
  * @access  Public
  */
 router.get('/home/:mode/data', async (req, res) => {
@@ -473,7 +472,7 @@ router.get('/home/:mode/data', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Handle SkillUp data from SkillUpBatch collection
+      // Handle SkillUp data from SkillUpBatch collection ONLY
       const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch year');
 
       // Extract unique categories and add "All" at the beginning
@@ -520,7 +519,7 @@ router.get('/home/:mode/data', async (req, res) => {
 
 /**
  * @route   GET /api/tutorial-skill/home/:mode/content
- * @desc    Get all content for a specific mode - Flutter compatibility
+ * @desc    Flutter compatibility - Get all content for a specific mode
  * @access  Public
  */
 router.get('/home/:mode/content', async (req, res) => {
@@ -533,7 +532,7 @@ router.get('/home/:mode/content', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Handle SkillUp content from SkillUpBatch collection
+      // Handle SkillUp content from SkillUpBatch collection ONLY
       let query = {};
       if (category && category !== 'All') {
         query.category = category;
@@ -583,7 +582,7 @@ router.get('/home/:mode/content', async (req, res) => {
 
 /**
  * @route   GET /api/tutorial-skill/home/:mode/categories
- * @desc    Get all categories for a specific mode - Flutter compatibility
+ * @desc    Flutter compatibility - Get all categories for a specific mode
  * @access  Public
  */
 router.get('/home/:mode/categories', async (req, res) => {
@@ -596,7 +595,7 @@ router.get('/home/:mode/categories', async (req, res) => {
     }
     
     if (mode === 'SkillUp') {
-      // Get categories from SkillUpBatch collection
+      // Get categories from SkillUpBatch collection ONLY
       const skillUps = await SkillUpBatch.find({}).distinct('category');
       const categories = ['All', ...skillUps];
       return res.json(categories);
