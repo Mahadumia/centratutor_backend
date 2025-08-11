@@ -1,4 +1,4 @@
-// Updated tutorial_skill_routes.js - Fully Dynamic
+// Updated tutorial_skill_routes.js - Fully Dynamic with SkillUpBatch Integration
 const express = require('express');
 const router = express.Router();
 const TutorialSkillModel = require('../../models/tutorial_and_skills/tutorial_skill');
@@ -129,7 +129,6 @@ router.get('/:mode/content', async (req, res) => {
   }
 });
 
-
 /**
  * @route   GET /api/tutorial-skill/:mode/categories
  * @desc    Get all categories for a specific mode
@@ -144,15 +143,21 @@ router.get('/:mode/categories', async (req, res) => {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp categories
-    const categories = await tutorialSkillModel.getCategories(mode);
-    res.json(categories);
+    if (mode === 'SkillUp') {
+      // Get categories from SkillUpBatch collection
+      const skillUps = await SkillUpBatch.find({}).distinct('category');
+      const categories = ['All', ...skillUps];
+      return res.json(categories);
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial categories
+      const categories = await tutorialSkillModel.getCategories(mode);
+      res.json(categories);
+    }
   } catch (error) {
     console.error(`Error fetching ${req.params.mode} categories:`, error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
-
 
 /**
  * @route   GET /api/tutorial-skill/:mode/content/:id
@@ -168,9 +173,39 @@ router.get('/:mode/content/:id', async (req, res) => {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp content by ID
-    const content = await tutorialSkillModel.getContentById(mode, id);
-    res.json(content);
+    if (mode === 'SkillUp') {
+      // Get specific SkillUp content by ID
+      const skillUp = await SkillUpBatch.findById(id);
+      
+      if (!skillUp) {
+        return res.status(404).json({ message: 'SkillUp content not found' });
+      }
+      
+      // Transform to expected format
+      const totalLessons = skillUp.batch.reduce((total, batch) => {
+        return total + (batch.contents ? batch.contents.length : 0);
+      }, 0);
+      
+      const transformedContent = {
+        id: skillUp._id,
+        title: skillUp.subject,
+        description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
+        category: skillUp.category,
+        catName: 'skillup',
+        level: skillUp.category.toLowerCase(),
+        year: skillUp.year || new Date().getFullYear().toString(),
+        author: 'CentraTutor Team',
+        duration: `${totalLessons} lessons`,
+        thumbnail: `assets/images/${skillUp.category.toLowerCase()}_placeholder.png`,
+        time: null
+      };
+      
+      return res.json(transformedContent);
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial content by ID
+      const content = await tutorialSkillModel.getContentById(mode, id);
+      res.json(content);
+    }
   } catch (error) {
     console.error(`Error fetching ${req.params.mode} content by ID:`, error);
     
@@ -197,9 +232,49 @@ router.post('/:mode/content', async (req, res) => {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp content creation
-    const newContent = await tutorialSkillModel.addContent(mode, contentData);
-    res.status(201).json(newContent);
+    if (mode === 'SkillUp') {
+      // Create new SkillUpBatch entry
+      const requiredFields = ['category', 'year', 'subject', 'batch'];
+      
+      for (const field of requiredFields) {
+        if (!contentData[field]) {
+          throw new Error(`${field} is required`);
+        }
+      }
+      
+      // Validate batch array
+      if (!Array.isArray(contentData.batch) || contentData.batch.length === 0) {
+        throw new Error('Batch array is required and must contain at least one batch');
+      }
+      
+      // Validate each batch
+      for (let i = 0; i < contentData.batch.length; i++) {
+        const batch = contentData.batch[i];
+        if (!batch.topics || !Array.isArray(batch.topics) || batch.topics.length === 0) {
+          throw new Error(`Batch ${batch.batchNumber || i+1} must have a topics array with at least one topic`);
+        }
+      }
+      
+      // Check if SkillUp with same category, year, and subject already exists
+      const existingSkillUp = await SkillUpBatch.findOne({
+        category: contentData.category,
+        year: contentData.year,
+        subject: contentData.subject
+      });
+      
+      if (existingSkillUp) {
+        throw new Error('SkillUp with this category, year, and subject already exists');
+      }
+      
+      const newSkillUp = new SkillUpBatch(contentData);
+      await newSkillUp.save();
+      
+      return res.status(201).json(newSkillUp);
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial content creation
+      const newContent = await tutorialSkillModel.addContent(mode, contentData);
+      res.status(201).json(newContent);
+    }
   } catch (error) {
     console.error(`Error adding ${req.params.mode} content:`, error);
     
@@ -226,9 +301,26 @@ router.put('/:mode/content/:id', async (req, res) => {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp content updates
-    const updatedContent = await tutorialSkillModel.updateContent(mode, id, contentData);
-    res.json(updatedContent);
+    if (mode === 'SkillUp') {
+      // Update SkillUpBatch entry
+      contentData.updatedAt = Date.now();
+      
+      const updatedSkillUp = await SkillUpBatch.findByIdAndUpdate(
+        id,
+        { $set: contentData },
+        { new: true }
+      );
+      
+      if (!updatedSkillUp) {
+        return res.status(404).json({ message: 'SkillUp content not found' });
+      }
+      
+      return res.json(updatedSkillUp);
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial content updates
+      const updatedContent = await tutorialSkillModel.updateContent(mode, id, contentData);
+      res.json(updatedContent);
+    }
   } catch (error) {
     console.error(`Error updating ${req.params.mode} content:`, error);
     
@@ -254,9 +346,20 @@ router.delete('/:mode/content/:id', async (req, res) => {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp content deletion
-    await tutorialSkillModel.deleteContent(mode, id);
-    res.json({ message: `${mode} content with ID ${id} successfully deleted` });
+    if (mode === 'SkillUp') {
+      // Delete SkillUpBatch entry
+      const deletedSkillUp = await SkillUpBatch.findByIdAndDelete(id);
+      
+      if (!deletedSkillUp) {
+        return res.status(404).json({ message: 'SkillUp content not found' });
+      }
+      
+      return res.json({ message: `SkillUp content with ID ${id} successfully deleted` });
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial content deletion
+      await tutorialSkillModel.deleteContent(mode, id);
+      res.json({ message: `Tutorial content with ID ${id} successfully deleted` });
+    }
   } catch (error) {
     console.error(`Error deleting ${req.params.mode} content:`, error);
     
@@ -287,9 +390,18 @@ router.post('/:mode/categories', async (req, res) => {
       return res.status(400).json({ message: 'Category name is required' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp category creation
-    const newCategory = await tutorialSkillModel.addCategory(mode, categoryName);
-    res.status(201).json(newCategory);
+    if (mode === 'SkillUp') {
+      // For SkillUp, we don't need to create categories separately
+      // They are created automatically when SkillUpBatch entries are added
+      return res.status(200).json({ 
+        message: 'SkillUp categories are created automatically when adding content',
+        categoryName 
+      });
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial category creation
+      const newCategory = await tutorialSkillModel.addCategory(mode, categoryName);
+      res.status(201).json(newCategory);
+    }
   } catch (error) {
     console.error(`Error adding ${req.params.mode} category:`, error);
     
@@ -315,9 +427,22 @@ router.delete('/:mode/categories/:name', async (req, res) => {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp category deletion
-    await tutorialSkillModel.deleteCategory(mode, name);
-    res.json({ message: `${mode} category ${name} successfully deleted` });
+    if (mode === 'SkillUp') {
+      // For SkillUp, check if any content exists with this category
+      const existingContent = await SkillUpBatch.findOne({ category: name });
+      
+      if (existingContent) {
+        return res.status(400).json({ 
+          message: 'Cannot delete category that has associated content. Delete the content first.' 
+        });
+      }
+      
+      return res.json({ message: `SkillUp category ${name} successfully deleted` });
+    } else {
+      // Use the existing TutorialSkillModel for Tutorial category deletion
+      await tutorialSkillModel.deleteCategory(mode, name);
+      res.json({ message: `Tutorial category ${name} successfully deleted` });
+    }
   } catch (error) {
     console.error(`Error deleting ${req.params.mode} category:`, error);
     

@@ -1,4 +1,4 @@
-// index.js - Fixed routing section
+// index.js - Complete updated file with fixed routing
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -92,16 +92,18 @@ app.use('/api/content', contentRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/jupeb/question-bank', jupebQuestionBankRoutes); 
 
-// FIXED: Tutorial and Skill Routes
-// The Flutter app expects these specific endpoints:
-app.use('/api/tutorial-skill/Tutorial', tutorialAndSkillsClassRoutes);  // For Tutorial mode
-app.use('/api/tutorial-skill/SkillUp', tutorialAndSkillsClassRoutes);   // For SkillUp mode
-app.use('/api/tutorial-skill/home', tutorialAndSkillsClassRoutes);      // General home routes
+// UPDATED: Tutorial and Skill Routes
+// Order matters - specific routes first, then general routes
 
-// Specific module routes
+// Specific module routes (must come before the general tutorial-skill route)
 app.use('/api/tutorial-skill/nightclass', nightClassRoutes);
 app.use('/api/tutorial-skill/skillup', skillupRoutes);
 app.use('/api/tutorial-skill/pastquestionvideo', pqVideoClassRoutes);
+
+// UNIFIED TUTORIAL AND SKILL ROUTES
+// This handles both Tutorial and SkillUp modes dynamically
+// Must come after specific routes to avoid conflicts
+app.use('/api/tutorial-skill', tutorialAndSkillsClassRoutes);
 
 // Subscription routes
 app.use('/api/subscription', subscriptionRoutes);
