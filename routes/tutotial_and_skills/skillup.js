@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const SkillUpBatch = require('../../models/tutorial_and_skills/skillup');
 
-// Create a new skill up
+// Create a new skill up (for detailed content with batches)
 router.post('/create', async (req, res) => {
     try {
         // Check if a skill up with the same category, year, and subject already exists
@@ -52,106 +52,28 @@ router.post('/create', async (req, res) => {
     }
 });
 
-// Get full data for SkillUp mode (matches Flutter app's expectation)
-router.get('/SkillUp/data', async (req, res) => {
-    try {
-        // Get all skill up courses
-        const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch year');
-
-        // Extract unique categories and add "All" at the beginning
-        const uniqueCategories = [...new Set(skillUps.map(item => item.category))];
-        const categories = ['All', ...uniqueCategories];
-
-        // Transform data to match Flutter app's expected format
-        const items = skillUps.map(skillUp => {
-            // Calculate total duration (you can customize this logic)
-            const totalLessons = skillUp.batch.reduce((total, batch) => total + (batch.contents ? batch.contents.length : 0), 0);
-            const estimatedDuration = `${totalLessons * 15} min`; // Assuming 15 min per lesson
-
-            return {
-                id: skillUp._id,
-                title: skillUp.subject,
-                description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
-                category: skillUp.category,
-                catName: 'skillup', // This matches what Flutter expects for SkillUp
-                level: skillUp.category.toLowerCase(), // Use category as level for navigation
-                year: skillUp.year || new Date().getFullYear().toString(),
-                author: 'CentraTutor Team',
-                duration: estimatedDuration,
-                thumbnail: 'assets/images/skillup_placeholder.png', // You can customize this
-                time: null // SkillUp courses don't have specific times like night classes
-            };
-        });
-
-        res.json({
-            categories,
-            items
-        });
-    } catch (error) {
-        console.error('Error fetching SkillUp data:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
-    }
-});
-
-// Get categories for SkillUp mode
-router.get('/SkillUp/categories', async (req, res) => {
-    try {
-        const skillUps = await SkillUpBatch.find({}).distinct('category');
-        const categories = ['All', ...skillUps];
-        res.json(categories);
-    } catch (error) {
-        console.error('Error fetching SkillUp categories:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
-    }
-});
-
-// Get content for SkillUp mode, optionally filtered by category
-router.get('/SkillUp/content', async (req, res) => {
-    try {
-        const { category } = req.query;
-        
-        let query = {};
-        if (category && category !== 'All') {
-            query.category = category;
-        }
-
-        const skillUps = await SkillUpBatch.find(query).select('category subject subjectDescription batch year');
-
-        // Transform data to match Flutter app's expected format
-        const items = skillUps.map(skillUp => {
-            const totalLessons = skillUp.batch.reduce((total, batch) => total + (batch.contents ? batch.contents.length : 0), 0);
-            const estimatedDuration = `${totalLessons * 15} min`;
-
-            return {
-                id: skillUp._id,
-                title: skillUp.subject,
-                description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
-                category: skillUp.category,
-                catName: 'skillup',
-                level: skillUp.category.toLowerCase(), // Use category as level for navigation
-                year: skillUp.year || new Date().getFullYear().toString(),
-                author: 'CentraTutor Team',
-                duration: estimatedDuration,
-                thumbnail: 'assets/images/skillup_placeholder.png',
-                time: null
-            };
-        });
-
-        res.json(items);
-    } catch (error) {
-        console.error('Error fetching SkillUp content:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
-    }
-});
-
-// Get skill up by category, year and subject (matches Flutter sub-page expectations)
-router.get('/:category/:year/:subject', async (req, res) => {
+// IMPORTANT: This route handles the Flutter app's detail page request
+// Flutter calls: /api/tutorial-skill/skillup/{level}/{year}/{subject}
+// where level is the catName (skillup), year is learnerSet, and subject is title
+router.get('/:level/:year/:subject', async (req, res) => {
     try {
         // URL decode the subject parameter to handle spaces
         const decodedSubject = decodeURIComponent(req.params.subject);
         
+        // Map level back to category since level in Flutter app is category.toLowerCase()
+        const levelToCategoryMap = {
+            'ai': 'AI',
+            'engineering': 'Engineering',
+            'creativeskills': 'Creative Skills',
+            'creative skills': 'Creative Skills',
+            'sales': 'Sales',
+            'data': 'Data'
+        };
+        
+        const category = levelToCategoryMap[req.params.level.toLowerCase()] || req.params.level;
+        
         const skillUp = await SkillUpBatch.findOne({
-            category: new RegExp(`^${req.params.category}$`, 'i'), // Case-insensitive search
+            category: new RegExp(`^${category}$`, 'i'), // Case-insensitive search
             year: req.params.year,
             subject: decodedSubject
         });
@@ -434,85 +356,5 @@ router.delete('/:id', async (req, res) => {
         });
     }
 });
-
-// Get skill up by catName/level/year/subject (matches Flutter sub-page expectations)
-router.get('/skillup/:level/:year/:subject', async (req, res) => {
-    try {
-        // URL decode the subject parameter to handle spaces
-        const decodedSubject = decodeURIComponent(req.params.subject);
-        
-        // Map level back to category since level in Flutter app is category.toLowerCase()
-        const levelToCategoryMap = {
-            'ai': 'AI',
-            'engineering': 'Engineering',
-            'creativeskills': 'Creative Skills',
-            'creative skills': 'Creative Skills',
-            'sales': 'Sales',
-            'data': 'Data'
-        };
-        
-        const category = levelToCategoryMap[req.params.level.toLowerCase()] || req.params.level;
-        
-        const skillUp = await SkillUpBatch.findOne({
-            category: new RegExp(`^${category}$`, 'i'), // Case-insensitive search
-            year: req.params.year,
-            subject: decodedSubject
-        });
-
-        if (!skillUp) {
-            return res.status(404).json({
-                message: 'Skill up not found for this category, year and subject'
-            });
-        }
-
-        res.status(200).json(skillUp);
-    } catch (error) {
-        res.status(500).json({
-            message: 'Error fetching skill up',
-            error: error.message
-        });
-    }
-});
-
-// Alternative route to handle the exact Flutter app pattern
-// This matches: /api/tutorial-skill/skillup/ai/2025/subject
-router.get('/:level/:year/:subject', async (req, res) => {
-    try {
-        // URL decode the subject parameter to handle spaces
-        const decodedSubject = decodeURIComponent(req.params.subject);
-        
-        // Map level back to category since level in Flutter app is category.toLowerCase()
-        const levelToCategoryMap = {
-            'ai': 'AI',
-            'engineering': 'Engineering',
-            'creativeskills': 'Creative Skills',
-            'creative skills': 'Creative Skills',
-            'sales': 'Sales',
-            'data': 'Data'
-        };
-        
-        const category = levelToCategoryMap[req.params.level.toLowerCase()] || req.params.level;
-        
-        const skillUp = await SkillUpBatch.findOne({
-            category: new RegExp(`^${category}$`, 'i'), // Case-insensitive search
-            year: req.params.year,
-            subject: decodedSubject
-        });
-
-        if (!skillUp) {
-            return res.status(404).json({
-                message: 'Skill up not found for this category, year and subject'
-            });
-        }
-
-        res.status(200).json(skillUp);
-    } catch (error) {
-        res.status(500).json({
-            message: 'Error fetching skill up',
-            error: error.message
-        });
-    }
-});
-
 
 module.exports = router;
