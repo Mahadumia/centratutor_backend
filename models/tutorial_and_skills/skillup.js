@@ -16,6 +16,13 @@ const skillUpBatchSchema = mongoose.Schema({
     subjectDescription: {
         type: String
     },
+    // NEW FIELDS ADDED
+    thumbnail: {
+        type: String    // URL to the thumbnail image
+    },
+    author: {
+        type: String    // Author name
+    },
     batch: [
         {
             batchNumber: {

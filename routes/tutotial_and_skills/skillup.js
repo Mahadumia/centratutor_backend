@@ -39,6 +39,9 @@ router.post('/create', async (req, res) => {
             year: req.body.year,
             subject: req.body.subject,
             subjectDescription: req.body.subjectDescription,
+            // NEW FIELDS ADDED
+            thumbnail: req.body.thumbnail,
+            author: req.body.author,
             batch: req.body.batch || []
         });
 
@@ -51,7 +54,6 @@ router.post('/create', async (req, res) => {
         });
     }
 });
-
 // Add this to your skillup.js routes file
 // This route dynamically handles ANY category without hardcoding
 
