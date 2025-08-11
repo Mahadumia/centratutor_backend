@@ -52,40 +52,59 @@ router.post('/create', async (req, res) => {
     }
 });
 
-// IMPORTANT: This route handles the Flutter app's detail page request
-// Flutter calls: /api/tutorial-skill/skillup/{level}/{year}/{subject}
-// where level is the catName (skillup), year is learnerSet, and subject is title
+// Add this to your skillup.js routes file
+// This route dynamically handles ANY category without hardcoding
+
 router.get('/:level/:year/:subject', async (req, res) => {
     try {
         // URL decode the subject parameter to handle spaces
         const decodedSubject = decodeURIComponent(req.params.subject);
+        const levelParam = req.params.level.toLowerCase();
         
-        // Map level back to category since level in Flutter app is category.toLowerCase()
-        const levelToCategoryMap = {
-            'ai': 'AI',
-            'engineering': 'Engineering',
-            'creativeskills': 'Creative Skills',
-            'creative skills': 'Creative Skills',
-            'sales': 'Sales',
-            'data': 'Data'
-        };
+        console.log(`Looking for SkillUp: level=${levelParam}, year=${req.params.year}, subject=${decodedSubject}`);
         
-        const category = levelToCategoryMap[req.params.level.toLowerCase()] || req.params.level;
-        
-        const skillUp = await SkillUpBatch.findOne({
-            category: new RegExp(`^${category}$`, 'i'), // Case-insensitive search
+        // Find all SkillUps for this year and subject
+        const allSkillUps = await SkillUpBatch.find({
             year: req.params.year,
             subject: decodedSubject
         });
+        
+        console.log(`Found ${allSkillUps.length} potential matches`);
+        
+        // Find the one where category.toLowerCase() matches the level parameter
+        const matchedSkillUp = allSkillUps.find(skillUp => {
+            const categoryLower = skillUp.category.toLowerCase();
+            console.log(`Comparing: ${categoryLower} === ${levelParam}`);
+            return categoryLower === levelParam;
+        });
 
-        if (!skillUp) {
+        if (!matchedSkillUp) {
+            console.log(`No SkillUp found for level: ${levelParam}, year: ${req.params.year}, subject: ${decodedSubject}`);
+            
+            // Log available combinations for debugging
+            const availableCombinations = allSkillUps.map(su => ({
+                category: su.category,
+                categoryLower: su.category.toLowerCase(),
+                year: su.year,
+                subject: su.subject
+            }));
+            
+            console.log('Available combinations:', availableCombinations);
+            
             return res.status(404).json({
-                message: 'Skill up not found for this category, year and subject'
+                message: `Skill up not found for level: ${req.params.level}, year: ${req.params.year}, subject: ${decodedSubject}`,
+                debug: {
+                    searchedLevel: levelParam,
+                    availableCombinations
+                }
             });
         }
 
-        res.status(200).json(skillUp);
+        console.log(`Found matching SkillUp: ${matchedSkillUp.category} -> ${matchedSkillUp.subject}`);
+        res.status(200).json(matchedSkillUp);
+        
     } catch (error) {
+        console.error('Error fetching skill up:', error);
         res.status(500).json({
             message: 'Error fetching skill up',
             error: error.message

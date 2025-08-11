@@ -1,7 +1,8 @@
-// routes/tutorial_skill_routes.js
+// Updated tutorial_skill_routes.js - Fully Dynamic
 const express = require('express');
 const router = express.Router();
 const TutorialSkillModel = require('../../models/tutorial_and_skills/tutorial_skill');
+const SkillUpBatch = require('../../models/tutorial_and_skills/skillup');
 
 // Initialize model
 const tutorialSkillModel = new TutorialSkillModel();
@@ -15,19 +16,119 @@ router.get('/:mode/data', async (req, res) => {
   try {
     const { mode } = req.params;
     
-    // Validate mode parameter
     if (mode !== 'Tutorial' && mode !== 'SkillUp') {
       return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
     }
     
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp listing
-    const data = await tutorialSkillModel.getFullData(mode);
-    res.json(data);
+    if (mode === 'SkillUp') {
+      // Handle SkillUp data from SkillUpBatch collection
+      const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch year');
+
+      // Extract unique categories and add "All" at the beginning
+      const uniqueCategories = [...new Set(skillUps.map(item => item.category))];
+      const categories = ['All', ...uniqueCategories];
+
+      // Transform SkillUpBatch data to match Flutter app's expected format
+      const items = skillUps.map(skillUp => {
+        // Calculate total duration dynamically
+        const totalLessons = skillUp.batch.reduce((total, batch) => {
+          return total + (batch.contents ? batch.contents.length : 0);
+        }, 0);
+        const estimatedDuration = `${totalLessons} lessons`;
+
+        return {
+          id: skillUp._id,
+          title: skillUp.subject,
+          description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
+          category: skillUp.category,
+          catName: 'skillup', // Always 'skillup' for SkillUp courses
+          level: skillUp.category.toLowerCase(), // DYNAMIC: category becomes level (ai, engineering, data, etc.)
+          year: skillUp.year || new Date().getFullYear().toString(),
+          author: 'CentraTutor Team',
+          duration: estimatedDuration,
+          thumbnail: `assets/images/${skillUp.category.toLowerCase()}_placeholder.png`,
+          time: null
+        };
+      });
+
+      return res.json({
+        categories,
+        items
+      });
+    } else {
+      // Handle Tutorial data using the existing model
+      const data = await tutorialSkillModel.getFullData(mode);
+      res.json(data);
+    }
   } catch (error) {
     console.error(`Error fetching ${req.params.mode} data:`, error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
+
+/**
+ * @route   GET /api/tutorial-skill/:mode/content
+ * @desc    Get all content for a specific mode, optionally filtered by category
+ * @access  Public
+ */
+router.get('/:mode/content', async (req, res) => {
+  try {
+    const { mode } = req.params;
+    const { category } = req.query;
+    
+    if (mode !== 'Tutorial' && mode !== 'SkillUp') {
+      return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
+    }
+    
+    if (mode === 'SkillUp') {
+      // Handle SkillUp content from SkillUpBatch collection
+      let query = {};
+      if (category && category !== 'All') {
+        query.category = category;
+      }
+
+      const skillUps = await SkillUpBatch.find(query).select('category subject subjectDescription batch year');
+
+      // Transform data to match Flutter app's expected format
+      const items = skillUps.map(skillUp => {
+        const totalLessons = skillUp.batch.reduce((total, batch) => {
+          return total + (batch.contents ? batch.contents.length : 0);
+        }, 0);
+        const estimatedDuration = `${totalLessons} lessons`;
+
+        return {
+          id: skillUp._id,
+          title: skillUp.subject,
+          description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
+          category: skillUp.category,
+          catName: 'skillup',
+          level: skillUp.category.toLowerCase(), // DYNAMIC: Works for any category
+          year: skillUp.year || new Date().getFullYear().toString(),
+          author: 'CentraTutor Team',
+          duration: estimatedDuration,
+          thumbnail: `assets/images/${skillUp.category.toLowerCase()}_placeholder.png`,
+          time: null
+        };
+      });
+
+      return res.json(items);
+    } else {
+      // Handle Tutorial content using the existing model
+      let content;
+      if (category && category !== 'All') {
+        content = await tutorialSkillModel.getContentByCategory(mode, category);
+      } else {
+        content = await tutorialSkillModel.getAllContent(mode);
+      }
+      
+      res.json(content);
+    }
+  } catch (error) {
+    console.error(`Error fetching ${req.params.mode} content:`, error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 
 /**
  * @route   GET /api/tutorial-skill/:mode/categories
@@ -52,35 +153,6 @@ router.get('/:mode/categories', async (req, res) => {
   }
 });
 
-/**
- * @route   GET /api/tutorial-skill/:mode/content
- * @desc    Get all content for a specific mode, optionally filtered by category
- * @access  Public
- */
-router.get('/:mode/content', async (req, res) => {
-  try {
-    const { mode } = req.params;
-    const { category } = req.query;
-    
-    // Validate mode parameter
-    if (mode !== 'Tutorial' && mode !== 'SkillUp') {
-      return res.status(400).json({ message: 'Mode must be either "Tutorial" or "SkillUp"' });
-    }
-    
-    // Use the existing TutorialSkillModel for both Tutorial and SkillUp content listing
-    let content;
-    if (category && category !== 'All') {
-      content = await tutorialSkillModel.getContentByCategory(mode, category);
-    } else {
-      content = await tutorialSkillModel.getAllContent(mode);
-    }
-    
-    res.json(content);
-  } catch (error) {
-    console.error(`Error fetching ${req.params.mode} content:`, error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
 
 /**
  * @route   GET /api/tutorial-skill/:mode/content/:id
