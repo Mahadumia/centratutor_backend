@@ -52,21 +52,20 @@ router.post('/create', async (req, res) => {
     }
 });
 
-// NEW ROUTES THAT MATCH FLUTTER APP EXPECTATIONS
-
 // Get full data for SkillUp mode (matches Flutter app's expectation)
 router.get('/SkillUp/data', async (req, res) => {
     try {
         // Get all skill up courses
         const skillUps = await SkillUpBatch.find({}).select('category subject subjectDescription batch year');
 
-        // Extract unique categories
-        const categories = ['All', ...new Set(skillUps.map(item => item.category))];
+        // Extract unique categories and add "All" at the beginning
+        const uniqueCategories = [...new Set(skillUps.map(item => item.category))];
+        const categories = ['All', ...uniqueCategories];
 
         // Transform data to match Flutter app's expected format
         const items = skillUps.map(skillUp => {
             // Calculate total duration (you can customize this logic)
-            const totalLessons = skillUp.batch.reduce((total, batch) => total + batch.contents.length, 0);
+            const totalLessons = skillUp.batch.reduce((total, batch) => total + (batch.contents ? batch.contents.length : 0), 0);
             const estimatedDuration = `${totalLessons * 15} min`; // Assuming 15 min per lesson
 
             return {
@@ -74,8 +73,8 @@ router.get('/SkillUp/data', async (req, res) => {
                 title: skillUp.subject,
                 description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
                 category: skillUp.category,
-                catName: 'skillup', // This matches what Flutter expects
-                level: skillUp.category.toLowerCase(), // FIXED: Use category as level for navigation
+                catName: 'skillup', // This matches what Flutter expects for SkillUp
+                level: skillUp.category.toLowerCase(), // Use category as level for navigation
                 year: skillUp.year || new Date().getFullYear().toString(),
                 author: 'CentraTutor Team',
                 duration: estimatedDuration,
@@ -120,7 +119,7 @@ router.get('/SkillUp/content', async (req, res) => {
 
         // Transform data to match Flutter app's expected format
         const items = skillUps.map(skillUp => {
-            const totalLessons = skillUp.batch.reduce((total, batch) => total + batch.contents.length, 0);
+            const totalLessons = skillUp.batch.reduce((total, batch) => total + (batch.contents ? batch.contents.length : 0), 0);
             const estimatedDuration = `${totalLessons * 15} min`;
 
             return {
@@ -129,7 +128,7 @@ router.get('/SkillUp/content', async (req, res) => {
                 description: skillUp.subjectDescription || 'Enhance your skills with this comprehensive course',
                 category: skillUp.category,
                 catName: 'skillup',
-                level: skillUp.category.toLowerCase(), // FIXED: Use category as level for navigation
+                level: skillUp.category.toLowerCase(), // Use category as level for navigation
                 year: skillUp.year || new Date().getFullYear().toString(),
                 author: 'CentraTutor Team',
                 duration: estimatedDuration,
@@ -435,5 +434,85 @@ router.delete('/:id', async (req, res) => {
         });
     }
 });
+
+// Get skill up by catName/level/year/subject (matches Flutter sub-page expectations)
+router.get('/skillup/:level/:year/:subject', async (req, res) => {
+    try {
+        // URL decode the subject parameter to handle spaces
+        const decodedSubject = decodeURIComponent(req.params.subject);
+        
+        // Map level back to category since level in Flutter app is category.toLowerCase()
+        const levelToCategoryMap = {
+            'ai': 'AI',
+            'engineering': 'Engineering',
+            'creativeskills': 'Creative Skills',
+            'creative skills': 'Creative Skills',
+            'sales': 'Sales',
+            'data': 'Data'
+        };
+        
+        const category = levelToCategoryMap[req.params.level.toLowerCase()] || req.params.level;
+        
+        const skillUp = await SkillUpBatch.findOne({
+            category: new RegExp(`^${category}$`, 'i'), // Case-insensitive search
+            year: req.params.year,
+            subject: decodedSubject
+        });
+
+        if (!skillUp) {
+            return res.status(404).json({
+                message: 'Skill up not found for this category, year and subject'
+            });
+        }
+
+        res.status(200).json(skillUp);
+    } catch (error) {
+        res.status(500).json({
+            message: 'Error fetching skill up',
+            error: error.message
+        });
+    }
+});
+
+// Alternative route to handle the exact Flutter app pattern
+// This matches: /api/tutorial-skill/skillup/ai/2025/subject
+router.get('/:level/:year/:subject', async (req, res) => {
+    try {
+        // URL decode the subject parameter to handle spaces
+        const decodedSubject = decodeURIComponent(req.params.subject);
+        
+        // Map level back to category since level in Flutter app is category.toLowerCase()
+        const levelToCategoryMap = {
+            'ai': 'AI',
+            'engineering': 'Engineering',
+            'creativeskills': 'Creative Skills',
+            'creative skills': 'Creative Skills',
+            'sales': 'Sales',
+            'data': 'Data'
+        };
+        
+        const category = levelToCategoryMap[req.params.level.toLowerCase()] || req.params.level;
+        
+        const skillUp = await SkillUpBatch.findOne({
+            category: new RegExp(`^${category}$`, 'i'), // Case-insensitive search
+            year: req.params.year,
+            subject: decodedSubject
+        });
+
+        if (!skillUp) {
+            return res.status(404).json({
+                message: 'Skill up not found for this category, year and subject'
+            });
+        }
+
+        res.status(200).json(skillUp);
+    } catch (error) {
+        res.status(500).json({
+            message: 'Error fetching skill up',
+            error: error.message
+        });
+    }
+});
+
 
 module.exports = router;

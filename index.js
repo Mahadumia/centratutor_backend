@@ -1,4 +1,4 @@
-// index.js - Clean Scalable API System
+// index.js - Fixed routing section
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -73,7 +73,6 @@ const examRoutes = require('./routes/exam');
 const pastQuestionRoutes = require('./routes/questions');
 const contentRoutes = require('./routes/content');
 
-
 // Import REQUIRED legacy routes
 const authRoutes = require('./routes/auth/auth');
 const jupebQuestionBankRoutes = require('./routes/jupeb/questionBank'); 
@@ -89,15 +88,22 @@ app.use('/api/exams', examRoutes);
 app.use('/api/questions', pastQuestionRoutes);
 app.use('/api/content', contentRoutes);
 
-
 // REQUIRED LEGACY ROUTES
 app.use('/api/auth', authRoutes);
 app.use('/api/jupeb/question-bank', jupebQuestionBankRoutes); 
-app.use('/api/tutorial-skill/home', tutorialAndSkillsClassRoutes);
+
+// FIXED: Tutorial and Skill Routes
+// The Flutter app expects these specific endpoints:
+app.use('/api/tutorial-skill/Tutorial', tutorialAndSkillsClassRoutes);  // For Tutorial mode
+app.use('/api/tutorial-skill/SkillUp', tutorialAndSkillsClassRoutes);   // For SkillUp mode
+app.use('/api/tutorial-skill/home', tutorialAndSkillsClassRoutes);      // General home routes
+
+// Specific module routes
 app.use('/api/tutorial-skill/nightclass', nightClassRoutes);
-app.use('/api/tutorial-skill/home', skillupRoutes);
 app.use('/api/tutorial-skill/skillup', skillupRoutes);
 app.use('/api/tutorial-skill/pastquestionvideo', pqVideoClassRoutes);
+
+// Subscription routes
 app.use('/api/subscription', subscriptionRoutes);
 
 // Simple API info endpoint
