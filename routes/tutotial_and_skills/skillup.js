@@ -356,30 +356,7 @@ router.put('/:id/batch/:batchId/content/:contentId/readStatus', async (req, res)
     }
 });
 
-// Delete a skill up
-router.delete('/:id', async (req, res) => {
-    try {
-        const deletedSkillUp = await SkillUpBatch.findByIdAndDelete(req.params.id);
-        
-        if (!deletedSkillUp) {
-            return res.status(404).json({
-                message: 'Skill up not found'
-            });
-        }
-        
-        res.status(200).json({
-            message: 'Skill up deleted successfully'
-        });
-    } catch (error) {
-        res.status(500).json({
-            message: 'Skill up not deleted',
-            error: error.message
-        });
-    }
-});
 
-
-// Delete ALL skill ups permanently (hard delete)
 router.delete('/delete-all', async (req, res) => {
     try {
         // Get count before deletion for logging
@@ -399,6 +376,28 @@ router.delete('/delete-all', async (req, res) => {
         console.error('Error deleting all skill ups:', error);
         res.status(500).json({
             message: 'Failed to delete all skill ups',
+            error: error.message
+        });
+    }
+});
+
+// Delete a single skill up (keep this AFTER the delete-all route)
+router.delete('/:id', async (req, res) => {
+    try {
+        const deletedSkillUp = await SkillUpBatch.findByIdAndDelete(req.params.id);
+        
+        if (!deletedSkillUp) {
+            return res.status(404).json({
+                message: 'Skill up not found'
+            });
+        }
+        
+        res.status(200).json({
+            message: 'Skill up deleted successfully'
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: 'Skill up not deleted',
             error: error.message
         });
     }
